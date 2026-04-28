@@ -1,0 +1,27 @@
+# Rust build output
+/target/
+**/*.rs.bk
+
+# Cargo lockfile in libraries (keep for binaries — sluice is a binary, but
+# nested crates that are libs only should not commit theirs). We commit the
+# top-level Cargo.lock since this repo ships binaries.
+Cargo.lock.bak
+
+# Editor / OS artifacts
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Local environment overrides
+.env
+.envrc
+.direnv/
+
+# eBPF build outputs
+/sluice-ebpf/target/
+
+# Build/runtime sockets and state
+/run/
+*.sock
