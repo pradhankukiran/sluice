@@ -71,6 +71,8 @@ async fn run_async() -> Result<()> {
         verdicts_pushed = pushed,
         "kernel verdict map populated from /proc"
     );
+    let kernel_map = Arc::new(Mutex::new(kernel_map));
+    let pending_prompts: Arc<Mutex<HashSet<u32>>> = Arc::new(Mutex::new(HashSet::new()));
 
     let programs = attach::attach_connect_programs(&mut bpf, &cgroup_root)?;
     for name in &programs {
@@ -82,12 +84,19 @@ async fn run_async() -> Result<()> {
     let snapshot = Arc::new(ipc_server::build_snapshot(&rules, policy.as_str()));
     let (events_tx, _) = broadcast::channel::<ipc::Event>(EVENT_BROADCAST_CAPACITY);
     let socket_path = resolve_socket_path();
+    let daemon_handle = ipc_server::DaemonHandle {
+        kernel_map: Arc::clone(&kernel_map),
+        pending_prompts: Arc::clone(&pending_prompts),
+    };
     let ipc_handle = {
         let snapshot = Arc::clone(&snapshot);
         let events_tx = events_tx.clone();
         let socket_path = socket_path.clone();
+        let daemon_handle = daemon_handle.clone();
         tokio::spawn(async move {
-            if let Err(err) = ipc_server::serve(&socket_path, snapshot, events_tx).await {
+            if let Err(err) =
+                ipc_server::serve(&socket_path, snapshot, events_tx, daemon_handle).await
+            {
                 tracing::error!(error = %err, "ipc server failed");
             }
         })
@@ -96,7 +105,6 @@ async fn run_async() -> Result<()> {
 
     let mut reader = EventReader::from_ebpf(&mut bpf)?;
     let mut cache = ProcInfoCache::with_default_capacity();
-    let pending_prompts: Arc<Mutex<HashSet<u32>>> = Arc::new(Mutex::new(HashSet::new()));
     tracing::info!("event reader ready, watching for connections");
 
     tokio::select! {
@@ -107,13 +115,15 @@ async fn run_async() -> Result<()> {
             // walk hits this path on its first outbound connect. We push
             // its verdict so subsequent connects from the same PID
             // short-circuit in the kernel.
-            if !kernel_map.has_seen(event.tgid) {
-                if let Err(err) = kernel_map.evaluate_and_push(event.tgid, &rules) {
-                    tracing::warn!(
-                        pid = event.tgid,
-                        error = %err,
-                        "failed to push lazy verdict to kernel map"
-                    );
+            if let Ok(mut km) = kernel_map.lock() {
+                if !km.has_seen(event.tgid) {
+                    if let Err(err) = km.evaluate_and_push(event.tgid, &rules) {
+                        tracing::warn!(
+                            pid = event.tgid,
+                            error = %err,
+                            "failed to push lazy verdict to kernel map"
+                        );
+                    }
                 }
             }
 

@@ -6,10 +6,11 @@
 //! the server pushes `Frame::Event` records as they arrive on the
 //! shared broadcast channel.
 
+use std::collections::HashSet;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use sluice_common::event::{
@@ -21,8 +22,17 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::broadcast;
 
+use crate::kernel_map::KernelVerdictMap;
 use crate::proc_info::ProcInfo;
 use crate::rules::types::{ExeMatch, HostMatch, PortMatch, ProtocolMatch, Rule};
+
+/// Shared state the IPC server mutates on behalf of clients (currently
+/// just `SetVerdict`; phase 8 will add rule edits).
+#[derive(Clone)]
+pub struct DaemonHandle {
+    pub kernel_map: Arc<Mutex<KernelVerdictMap>>,
+    pub pending_prompts: Arc<Mutex<HashSet<u32>>>,
+}
 
 const SOCKET_MODE: u32 = 0o666;
 
@@ -39,6 +49,7 @@ pub async fn serve(
     socket_path: &Path,
     snapshot: Arc<Snapshot>,
     events_tx: broadcast::Sender<Event>,
+    handle: DaemonHandle,
 ) -> Result<()> {
     if let Some(parent) = socket_path.parent() {
         std::fs::create_dir_all(parent)
@@ -71,8 +82,9 @@ pub async fn serve(
             .context("accepting ipc connection")?;
         let snapshot = Arc::clone(&snapshot);
         let events_tx = events_tx.clone();
+        let handle = handle.clone();
         tokio::spawn(async move {
-            if let Err(err) = handle_client(stream, snapshot, events_tx).await {
+            if let Err(err) = handle_client(stream, snapshot, events_tx, handle).await {
                 tracing::warn!(error = %err, "ipc client closed with error");
             }
         });
@@ -83,6 +95,7 @@ async fn handle_client(
     stream: UnixStream,
     snapshot: Arc<Snapshot>,
     events_tx: broadcast::Sender<Event>,
+    handle: DaemonHandle,
 ) -> Result<()> {
     let (read_half, mut write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half).lines();
@@ -142,22 +155,11 @@ async fn handle_client(
                     )
                     .await?;
                     let rx = events_tx.subscribe();
-                    return stream_events(reader, write_half, rx).await;
+                    return stream_events(reader, write_half, rx, handle).await;
                 }
-                // Real handler arrives in the next commit.
-                Request::SetVerdict { .. } => {
-                    send_frame(
-                        &mut write_half,
-                        &Frame::Response {
-                            id,
-                            body: Response::Error {
-                                message:
-                                    "set_verdict not handled outside the streaming session yet"
-                                        .to_string(),
-                            },
-                        },
-                    )
-                    .await?;
+                Request::SetVerdict { pid, verdict } => {
+                    let response = apply_verdict(&handle, pid, &verdict);
+                    send_frame(&mut write_half, &Frame::Response { id, body: response }).await?;
                 }
             },
             // Servers shouldn't see Response/Event frames; reject loudly
@@ -183,6 +185,7 @@ async fn stream_events(
     mut reader: tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
     mut writer: tokio::net::unix::OwnedWriteHalf,
     mut rx: broadcast::Receiver<Event>,
+    handle: DaemonHandle,
 ) -> Result<()> {
     loop {
         tokio::select! {
@@ -198,16 +201,65 @@ async fn stream_events(
                 send_frame(&mut writer, &Frame::Event(evt)).await?;
             }
             line = reader.next_line() => {
-                match line? {
-                    // Client may continue sending requests; phase 6 just
-                    // ignores them. Phase 7 will dispatch verdicts here.
-                    Some(_) => continue,
+                let line = match line? {
+                    Some(l) => l,
                     None => break,
+                };
+                let frame: Frame = match serde_json::from_str(&line) {
+                    Ok(f) => f,
+                    Err(err) => {
+                        tracing::warn!(error = %err, "malformed frame in stream");
+                        continue;
+                    }
+                };
+                if let Frame::Request { id, body: Request::SetVerdict { pid, verdict } } = frame {
+                    let response = apply_verdict(&handle, pid, &verdict);
+                    send_frame(&mut writer, &Frame::Response { id, body: response }).await?;
                 }
+                // Other request kinds during a subscription are ignored;
+                // subscribe-phase clients only send SetVerdict.
             }
         }
     }
     Ok(())
+}
+
+fn apply_verdict(handle: &DaemonHandle, pid: u32, verdict: &str) -> Response {
+    let verdict_value = match verdict {
+        "allow" => Verdict::Allow,
+        "deny" => Verdict::Deny,
+        other => {
+            return Response::Error {
+                message: format!("invalid verdict `{other}`; expected allow|deny"),
+            };
+        }
+    };
+
+    if let Err(err) = handle
+        .kernel_map
+        .lock()
+        .map_err(|e| anyhow::anyhow!("kernel_map mutex poisoned: {e}"))
+        .and_then(|mut km| km.set(pid, verdict_value))
+    {
+        return Response::Error {
+            message: format!("kernel map update failed: {err}"),
+        };
+    }
+
+    if let Ok(mut pending) = handle.pending_prompts.lock() {
+        pending.remove(&pid);
+    }
+
+    tracing::info!(
+        pid,
+        verdict = verdict_label(verdict_value),
+        "applied verdict from GUI"
+    );
+
+    Response::VerdictApplied {
+        pid,
+        verdict: verdict_label(verdict_value).to_string(),
+    }
 }
 
 async fn send_frame(writer: &mut tokio::net::unix::OwnedWriteHalf, frame: &Frame) -> Result<()> {
