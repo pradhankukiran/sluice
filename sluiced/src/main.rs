@@ -2,6 +2,7 @@
 
 mod attach;
 mod cgroup;
+mod cli;
 mod ebpf_loader;
 mod formatter;
 mod proc_cache;
