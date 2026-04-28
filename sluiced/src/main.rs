@@ -3,10 +3,14 @@
 mod attach;
 mod cgroup;
 mod ebpf_loader;
+mod ring_reader;
 
 use anyhow::Result;
 
-fn main() -> Result<()> {
+use crate::ring_reader::EventReader;
+
+#[tokio::main]
+async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -29,7 +33,26 @@ fn main() -> Result<()> {
         tracing::info!(program = name, "attached to cgroup");
     }
 
-    // Keep `bpf` alive — dropping it would close the program fds and detach.
-    let _hold_open = bpf;
+    let mut reader = EventReader::from_ebpf(&mut bpf)?;
+    tracing::info!("event reader ready, watching for connections");
+
+    tokio::select! {
+        result = reader.run(|event| {
+            tracing::info!(
+                pid = event.tgid,
+                tid = event.pid,
+                uid = event.uid,
+                family = event.family,
+                dport = event.dport,
+                "connection",
+            );
+        }) => {
+            result?;
+        }
+        _ = tokio::signal::ctrl_c() => {
+            tracing::info!("received ctrl-c, shutting down");
+        }
+    }
+
     Ok(())
 }
