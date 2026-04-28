@@ -40,6 +40,40 @@ pub struct DaemonHandle {
     pub store: Arc<Mutex<SqliteRuleStore>>,
 }
 
+impl DaemonHandle {
+    /// Pull the latest rule list from SQLite into the in-memory snapshot.
+    fn reload_rules(&self) -> anyhow::Result<()> {
+        let store = self
+            .store
+            .lock()
+            .map_err(|e| anyhow::anyhow!("store mutex poisoned: {e}"))?;
+        let new_rules = store.list()?;
+        let mut guard = self
+            .rules
+            .write()
+            .map_err(|e| anyhow::anyhow!("rules lock poisoned: {e}"))?;
+        *guard = new_rules;
+        Ok(())
+    }
+
+    /// Clear the kernel map and re-evaluate every running process
+    /// against the current rule snapshot. Called after rule mutation
+    /// so existing connections get the new verdict on their next attempt.
+    fn refresh_kernel_map(&self) -> anyhow::Result<()> {
+        let rules_guard = self
+            .rules
+            .read()
+            .map_err(|e| anyhow::anyhow!("rules lock poisoned: {e}"))?;
+        let mut km = self
+            .kernel_map
+            .lock()
+            .map_err(|e| anyhow::anyhow!("kernel_map mutex poisoned: {e}"))?;
+        km.clear_all()?;
+        let (_, _) = km.populate_from_proc(&rules_guard)?;
+        Ok(())
+    }
+}
+
 const SOCKET_MODE: u32 = 0o666;
 
 pub async fn serve(
@@ -147,24 +181,39 @@ async fn handle_client(
                     )
                     .await?;
                     let rx = events_tx.subscribe();
-                    return stream_events(reader, write_half, rx, handle).await;
+                    return stream_events(reader, write_half, rx, handle, events_tx).await;
                 }
                 Request::SetVerdict { pid, verdict } => {
                     let response = apply_verdict(&handle, pid, &verdict);
                     send_frame(&mut write_half, &Frame::Response { id, body: response }).await?;
                 }
-                Request::AddRule { .. } | Request::DeleteRule { .. } | Request::SetPolicy { .. } => {
-                    // Real handlers arrive in the task 67 commit.
-                    send_frame(
-                        &mut write_half,
-                        &Frame::Response {
-                            id,
-                            body: Response::Error {
-                                message: "rule mutation handlers not yet implemented".to_string(),
-                            },
-                        },
-                    )
-                    .await?;
+                Request::AddRule {
+                    exe,
+                    host,
+                    port,
+                    protocol,
+                    verdict,
+                } => {
+                    let response =
+                        apply_add_rule(&handle, &exe, &host, &port, &protocol, &verdict);
+                    if matches!(response, Response::RuleAdded { .. }) {
+                        let _ = events_tx.send(build_rules_changed_event(&handle));
+                    }
+                    send_frame(&mut write_half, &Frame::Response { id, body: response }).await?;
+                }
+                Request::DeleteRule { id: rule_id } => {
+                    let response = apply_delete_rule(&handle, rule_id);
+                    if matches!(response, Response::RuleDeleted { .. }) {
+                        let _ = events_tx.send(build_rules_changed_event(&handle));
+                    }
+                    send_frame(&mut write_half, &Frame::Response { id, body: response }).await?;
+                }
+                Request::SetPolicy { policy } => {
+                    let response = apply_set_policy(&handle, &policy);
+                    if matches!(response, Response::PolicyUpdated { .. }) {
+                        let _ = events_tx.send(build_rules_changed_event(&handle));
+                    }
+                    send_frame(&mut write_half, &Frame::Response { id, body: response }).await?;
                 }
             },
             // Servers shouldn't see Response/Event frames; reject loudly
@@ -191,6 +240,7 @@ async fn stream_events(
     mut writer: tokio::net::unix::OwnedWriteHalf,
     mut rx: broadcast::Receiver<Event>,
     handle: DaemonHandle,
+    events_tx_for_stream: broadcast::Sender<Event>,
 ) -> Result<()> {
     loop {
         tokio::select! {
@@ -217,16 +267,196 @@ async fn stream_events(
                         continue;
                     }
                 };
-                if let Frame::Request { id, body: Request::SetVerdict { pid, verdict } } = frame {
-                    let response = apply_verdict(&handle, pid, &verdict);
+                if let Frame::Request { id, body } = frame {
+                    let response = match body {
+                        Request::SetVerdict { pid, verdict } => apply_verdict(&handle, pid, &verdict),
+                        Request::AddRule {
+                            exe,
+                            host,
+                            port,
+                            protocol,
+                            verdict,
+                        } => {
+                            let resp = apply_add_rule(&handle, &exe, &host, &port, &protocol, &verdict);
+                            if matches!(resp, Response::RuleAdded { .. }) {
+                                let _ = events_tx_for_stream.send(build_rules_changed_event(&handle));
+                            }
+                            resp
+                        }
+                        Request::DeleteRule { id: rule_id } => {
+                            let resp = apply_delete_rule(&handle, rule_id);
+                            if matches!(resp, Response::RuleDeleted { .. }) {
+                                let _ = events_tx_for_stream.send(build_rules_changed_event(&handle));
+                            }
+                            resp
+                        }
+                        Request::SetPolicy { policy } => {
+                            let resp = apply_set_policy(&handle, &policy);
+                            if matches!(resp, Response::PolicyUpdated { .. }) {
+                                let _ = events_tx_for_stream.send(build_rules_changed_event(&handle));
+                            }
+                            resp
+                        }
+                        // Hello/Snapshot/SubscribeEvents during a stream
+                        // are ignored; clients should only send
+                        // SetVerdict / AddRule / DeleteRule / SetPolicy.
+                        Request::Hello | Request::Snapshot | Request::SubscribeEvents => continue,
+                    };
                     send_frame(&mut writer, &Frame::Response { id, body: response }).await?;
                 }
-                // Other request kinds during a subscription are ignored;
-                // subscribe-phase clients only send SetVerdict.
             }
         }
     }
     Ok(())
+}
+
+fn apply_add_rule(
+    handle: &DaemonHandle,
+    exe: &str,
+    host: &str,
+    port: &str,
+    protocol: &str,
+    verdict: &str,
+) -> Response {
+    use crate::rules::parse;
+
+    let exe_match = match parse::parse_exe(exe) {
+        Ok(v) => v,
+        Err(e) => {
+            return Response::Error {
+                message: format!("exe: {e}"),
+            }
+        }
+    };
+    let host_match = match parse::parse_host(host) {
+        Ok(v) => v,
+        Err(e) => {
+            return Response::Error {
+                message: format!("host: {e}"),
+            }
+        }
+    };
+    let port_match = match parse::parse_port(port) {
+        Ok(v) => v,
+        Err(e) => {
+            return Response::Error {
+                message: format!("port: {e}"),
+            }
+        }
+    };
+    let protocol_match = match parse::parse_protocol(protocol) {
+        Ok(v) => v,
+        Err(e) => {
+            return Response::Error {
+                message: format!("protocol: {e}"),
+            }
+        }
+    };
+    let verdict_value = match parse::parse_verdict(verdict) {
+        Ok(v) => v,
+        Err(e) => {
+            return Response::Error {
+                message: format!("verdict: {e}"),
+            }
+        }
+    };
+
+    let rule = Rule {
+        id: 0,
+        exe_match,
+        host: host_match,
+        port: port_match,
+        protocol: protocol_match,
+        verdict: verdict_value,
+    };
+
+    let id = match handle
+        .store
+        .lock()
+        .map_err(|e| anyhow::anyhow!("store mutex poisoned: {e}"))
+        .and_then(|s| s.insert(&rule))
+    {
+        Ok(id) => id,
+        Err(e) => {
+            return Response::Error {
+                message: format!("insert failed: {e}"),
+            }
+        }
+    };
+
+    if let Err(e) = handle.reload_rules() {
+        tracing::warn!(error = %e, "reload_rules failed after AddRule");
+    }
+    if let Err(e) = handle.refresh_kernel_map() {
+        tracing::warn!(error = %e, "refresh_kernel_map failed after AddRule");
+    }
+
+    tracing::info!(rule_id = id, "rule added via IPC");
+    Response::RuleAdded { id }
+}
+
+fn apply_delete_rule(handle: &DaemonHandle, id: i64) -> Response {
+    let removed = match handle
+        .store
+        .lock()
+        .map_err(|e| anyhow::anyhow!("store mutex poisoned: {e}"))
+        .and_then(|s| s.delete(id))
+    {
+        Ok(b) => b,
+        Err(e) => {
+            return Response::Error {
+                message: format!("delete failed: {e}"),
+            }
+        }
+    };
+
+    if !removed {
+        return Response::Error {
+            message: format!("no rule with id {id}"),
+        };
+    }
+
+    if let Err(e) = handle.reload_rules() {
+        tracing::warn!(error = %e, "reload_rules failed after DeleteRule");
+    }
+    if let Err(e) = handle.refresh_kernel_map() {
+        tracing::warn!(error = %e, "refresh_kernel_map failed after DeleteRule");
+    }
+
+    tracing::info!(rule_id = id, "rule deleted via IPC");
+    Response::RuleDeleted { id }
+}
+
+fn apply_set_policy(handle: &DaemonHandle, raw: &str) -> Response {
+    use crate::rules::parse;
+    let policy = match parse::parse_policy(raw) {
+        Ok(p) => p,
+        Err(e) => {
+            return Response::Error {
+                message: format!("{e}"),
+            }
+        }
+    };
+
+    if let Err(e) = handle
+        .store
+        .lock()
+        .map_err(|e| anyhow::anyhow!("store mutex poisoned: {e}"))
+        .and_then(|s| s.set_default_policy(policy))
+    {
+        return Response::Error {
+            message: format!("set_default_policy failed: {e}"),
+        };
+    }
+
+    if let Ok(mut guard) = handle.policy.write() {
+        *guard = policy;
+    }
+
+    tracing::info!(policy = policy.as_str(), "default policy updated via IPC");
+    Response::PolicyUpdated {
+        policy: policy.as_str().to_string(),
+    }
 }
 
 fn apply_verdict(handle: &DaemonHandle, pid: u32, verdict: &str) -> Response {
@@ -293,8 +523,6 @@ fn build_snapshot_response(handle: &DaemonHandle) -> Response {
     }
 }
 
-// Used by the AddRule / DeleteRule / SetPolicy handlers (added next).
-#[allow(dead_code)]
 pub fn build_rules_changed_event(handle: &DaemonHandle) -> Event {
     let rules = match handle.rules.read() {
         Ok(g) => g.iter().map(rule_summary).collect(),

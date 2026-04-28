@@ -58,6 +58,27 @@ impl KernelVerdictMap {
         self.seen.contains(&pid)
     }
 
+    /// Drop every entry from the kernel map and reset the local
+    /// "seen" tracker. Used by the IPC mutation handlers after
+    /// AddRule/DeleteRule so the next `populate_from_proc` re-evaluates
+    /// every running process against the new rule set rather than
+    /// inheriting stale verdicts.
+    pub fn clear_all(&mut self) -> Result<()> {
+        let keys: Vec<u32> = self
+            .inner
+            .keys()
+            .filter_map(|r| r.ok())
+            .collect();
+        for k in keys {
+            // Ignore per-key errors — concurrent kernel evictions can
+            // race with our removes, but we'll catch up on the next
+            // populate.
+            let _ = self.inner.remove(&k);
+        }
+        self.seen.clear();
+        Ok(())
+    }
+
     /// Evaluate exe-only rules for `pid` and push the result into the
     /// kernel map. Marks `pid` as seen even if no rule matched, so the
     /// caller doesn't re-evaluate it on every subsequent event.
