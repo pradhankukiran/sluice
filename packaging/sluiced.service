@@ -1,0 +1,38 @@
+[Unit]
+Description=Sluice — per-process Linux network gate (daemon)
+Documentation=https://github.com/kiran/sluice
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/sluiced run
+Restart=on-failure
+RestartSec=2
+
+# Run as root: eBPF needs CAP_BPF and tc-bpf attachment needs
+# CAP_NET_ADMIN. AmbientCapabilities is the systemd-native way to
+# grant just these and nothing else, but `User=root` + the equivalent
+# capability set is portable across older systemds.
+User=root
+AmbientCapabilities=CAP_BPF CAP_NET_ADMIN CAP_SYS_PTRACE
+NoNewPrivileges=true
+
+# /var/lib/sluice is created on first run (rules + rates DB lives there).
+# /run/sluice holds the IPC socket; created by the daemon at startup.
+StateDirectory=sluice
+RuntimeDirectory=sluice
+RuntimeDirectoryMode=0755
+
+# Hardening: no need for the network namespace, capabilities limited
+# above; the daemon doesn't fork.
+ProtectSystem=strict
+ReadWritePaths=/var/lib/sluice /run/sluice
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+ProtectControlGroups=false
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
