@@ -24,12 +24,16 @@ pub struct SluiceApp {
     rate_form: RateForm,
 }
 
-// Form fields wired into the Bandwidth view in the next commit.
-#[allow(dead_code)]
 #[derive(Default)]
 struct RateForm {
     pid: String,
     rate_kbps: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum RateField {
+    Pid,
+    RateKbps,
 }
 
 #[derive(Default)]
@@ -104,6 +108,9 @@ pub enum Message {
     AddRuleClicked,
     DeleteRule(i64),
     SetPolicy(String),
+    RateFieldChanged(RateField, String),
+    AddRate,
+    ClearRate(u32),
 }
 
 impl SluiceApp {
@@ -162,6 +169,27 @@ impl SluiceApp {
             }
             Message::SetPolicy(policy) => {
                 send_request(Request::SetPolicy { policy });
+            }
+            Message::RateFieldChanged(field, value) => match field {
+                RateField::Pid => self.rate_form.pid = value,
+                RateField::RateKbps => self.rate_form.rate_kbps = value,
+            },
+            Message::AddRate => {
+                if let (Ok(pid), Ok(rate_kbps)) =
+                    (self.rate_form.pid.parse::<u32>(), self.rate_form.rate_kbps.parse::<u64>())
+                {
+                    let rate_bps = rate_kbps.saturating_mul(1024);
+                    send_request(Request::SetRate {
+                        pid,
+                        rate_bps,
+                        // Burst = 1 second of rate; daemon defaults if 0.
+                        burst_bytes: rate_bps,
+                    });
+                    self.rate_form = RateForm::default();
+                }
+            }
+            Message::ClearRate(pid) => {
+                send_request(Request::ClearRate { pid });
             }
         }
         Task::none()
@@ -276,10 +304,43 @@ impl SluiceApp {
     }
 
     fn bandwidth_view(&self) -> Element<'_, Message> {
-        // Real implementation arrives in the next commit (task 93).
-        text(format!("Rate limits ({})", self.rates.len()))
-            .size(14)
-            .into()
+        let header = text(format!("Rate limits ({})", self.rates.len())).size(16);
+
+        let list: Element<'_, Message> = if self.rates.is_empty() {
+            text("(no per-process rate limits — add one below)")
+                .size(13)
+                .into()
+        } else {
+            let rows = self.rates.iter().map(rate_row).collect::<Vec<_>>();
+            scrollable(column(rows).spacing(4))
+                .height(Length::Fixed(200.0))
+                .into()
+        };
+
+        let form_label = text("Add limit").size(15);
+        let pid_input = text_input("pid", &self.rate_form.pid)
+            .on_input(|v| Message::RateFieldChanged(RateField::Pid, v))
+            .padding(4)
+            .width(Length::Fixed(220.0));
+        let rate_input = text_input("rate (KB/s)", &self.rate_form.rate_kbps)
+            .on_input(|v| Message::RateFieldChanged(RateField::RateKbps, v))
+            .padding(4)
+            .width(Length::Fixed(220.0));
+        let form = column![
+            row![text("pid").size(13).width(Length::Fixed(80.0)), pid_input]
+                .spacing(6)
+                .align_y(iced::Alignment::Center),
+            row![
+                text("rate (KB/s)").size(13).width(Length::Fixed(80.0)),
+                rate_input
+            ]
+            .spacing(6)
+            .align_y(iced::Alignment::Center),
+            button("Apply limit").on_press(Message::AddRate),
+        ]
+        .spacing(6);
+
+        column![header, list, form_label, form].spacing(10).into()
     }
 
     fn policy_view(&self) -> Element<'_, Message> {
@@ -403,6 +464,30 @@ fn field_row<'a>(label: &'a str, value: &str, field: FormField) -> Element<'a, M
         .spacing(6)
         .align_y(iced::Alignment::Center)
         .into()
+}
+
+fn rate_row(r: &RateEntry) -> Element<'_, Message> {
+    let rate_label = if r.rate_bps == 0 {
+        "unlimited".to_string()
+    } else {
+        format!("{} KB/s", r.rate_bps / 1024)
+    };
+    let summary = text(format!(
+        "pid={pid} rate={rate} burst={burst} B",
+        pid = r.pid,
+        rate = rate_label,
+        burst = r.burst_bytes,
+    ))
+    .size(13);
+    let clear = button(text("Clear").size(12)).on_press(Message::ClearRate(r.pid));
+    container(
+        row![summary, clear]
+            .spacing(8)
+            .align_y(iced::Alignment::Center),
+    )
+    .padding(4)
+    .width(Length::Fill)
+    .into()
 }
 
 fn prompt_row(p: &PendingPrompt) -> Element<'_, Message> {
