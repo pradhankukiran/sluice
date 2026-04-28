@@ -16,7 +16,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 authors = ["Kiran <kiran@ecorrouge.com>"]
-repository = "https://github.com/kiran/sluice"
+repository = "https://github.com/pradhankukiran/sluice"
 rust-version = "1.93"
 
 [workspace.dependencies]
@@ -47,7 +47,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 clap = { version = "4", features = ["derive"] }
 
 # GUI
-iced = { version = "0.13", features = ["tokio"] }
+iced = { version = "0.13", features = ["tokio", "svg"] }
 
 [profile.release]
 lto = true
