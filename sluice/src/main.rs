@@ -1,7 +1,9 @@
 //! `sluice` — the GUI front-end.
 
 mod app;
+mod icons;
 mod ipc_client;
+mod style;
 mod subscription;
 
 use crate::app::SluiceApp;
@@ -16,5 +18,7 @@ fn main() -> iced::Result {
 
     iced::application(SluiceApp::title, SluiceApp::update, SluiceApp::view)
         .subscription(SluiceApp::subscription)
+        .theme(|_| iced::Theme::Light)
+        .window_size((1440.0, 900.0))
         .run()
 }
