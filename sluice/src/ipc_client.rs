@@ -1,7 +1,3 @@
-// `connect_and_run` is consumed by the iced subscription in the next
-// commit; until then the wiring would otherwise warn dead.
-#![allow(dead_code)]
-
 //! Minimal IPC client for the Sluice GUI.
 //!
 //! Streams [`ClientMessage`]s into the iced UI: connection state

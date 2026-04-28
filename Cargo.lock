@@ -3305,6 +3305,7 @@ name = "sluice"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "futures",
  "iced",
  "serde_json",
  "sluice-common",

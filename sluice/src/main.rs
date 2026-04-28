@@ -1,10 +1,12 @@
 //! `sluice` — the GUI front-end.
 
+mod app;
 mod ipc_client;
+mod subscription;
 
-use anyhow::Result;
+use crate::app::SluiceApp;
 
-fn main() -> Result<()> {
+fn main() -> iced::Result {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -12,7 +14,7 @@ fn main() -> Result<()> {
         )
         .init();
 
-    tracing::info!("sluice GUI {} starting up", env!("CARGO_PKG_VERSION"));
-    tracing::info!("phase 1 skeleton — no UI yet");
-    Ok(())
+    iced::application(SluiceApp::title, SluiceApp::update, SluiceApp::view)
+        .subscription(SluiceApp::subscription)
+        .run()
 }
