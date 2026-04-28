@@ -9,7 +9,7 @@ commits.
 | 2 | [Passive Connection Observation](phase-2.md) | `cgroup/connect4`+`connect6` probes, ring-buffer events, daemon log |
 | 3 | [PID → Executable Resolution](phase-3.md) | `/proc/<pid>/exe` + cmdline lookup, start_time-keyed cache |
 | 4 | [Rules Engine + SQLite](phase-4.md) | Rule schema, match logic, default policy, CLI subcommands |
-| 5 | Active Blocking | Kernel-side rule cache, deny verdicts, cgroup attach |
+| 5 | [Active Blocking](phase-5.md) | Per-PID `VERDICTS` map, kernel-side deny, /proc walker, lazy update |
 | 6 | GUI Skeleton + IPC | `iced` window, Unix-socket protocol to `sluiced` |
 | 7 | Live Prompt Dialogs | "Allow this connection?" modal, verdict round-trip |
 | 8 | Rules Manager UI | List, edit, delete rules; default-policy toggle |
