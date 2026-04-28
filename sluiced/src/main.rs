@@ -21,11 +21,8 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command.unwrap_or(Command::Run) {
         Command::Run => daemon::run(),
-        Command::Rules { .. } | Command::Policy { .. } => {
-            // Subcommand handlers land in subsequent commits this phase.
-            tracing::warn!("subcommand handlers not yet implemented");
-            Ok(())
-        }
+        Command::Rules { action } => cli::run_rules(action),
+        Command::Policy { action } => cli::run_policy(action),
     }
 }
 

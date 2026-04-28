@@ -1,10 +1,6 @@
-// `evaluate` lights up alongside `RuleStore` — until then `matches` is
-// the only public entry. Allow until the store and main wiring land.
-#![allow(dead_code)]
-
 //! Rule-matching predicate. Pure function over `(Rule, ConnectEvent,
 //! ProcInfo)`; exercised by both unit tests and the `RuleStore` lookup
-//! path in later commits this phase.
+//! path in the daemon hot loop.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 

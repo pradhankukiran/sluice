@@ -1,7 +1,3 @@
-// `apply_migrations` is consumed by `store::SqliteRuleStore::open` in the
-// next commit. Until then it would warn dead.
-#![allow(dead_code)]
-
 //! SQL schema and migration runner.
 //!
 //! Migrations are applied idempotently via a `schema_version` row. New

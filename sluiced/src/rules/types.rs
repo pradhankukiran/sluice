@@ -1,7 +1,3 @@
-// Match types are exercised by `matcher`/`store` in the next commits;
-// the lint settles down once the rest of phase 4 lands.
-#![allow(dead_code)]
-
 //! Userspace rule-engine data types.
 //!
 //! Each [`Rule`] is a 4-tuple match — `(exe, host, port, protocol)` —

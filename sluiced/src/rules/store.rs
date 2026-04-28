@@ -1,6 +1,3 @@
-// Wired into main / CLI in subsequent commits this phase.
-#![allow(dead_code)]
-
 //! SQLite-backed [`Rule`] persistence.
 //!
 //! Match values (`ExeMatch`, `HostMatch`, ...) are stored as compact text
@@ -61,6 +58,7 @@ impl SqliteRuleStore {
         Ok(Self { conn })
     }
 
+    #[cfg(test)]
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory().context("opening in-memory sqlite")?;
         apply_migrations(&conn).context("applying schema migrations")?;
