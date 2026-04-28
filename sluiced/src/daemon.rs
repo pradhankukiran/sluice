@@ -17,6 +17,7 @@ use crate::dns_cache::DnsCache;
 use crate::ebpf_loader;
 use crate::formatter;
 use crate::ipc_server;
+use crate::kernel_bytes::KernelByteCounter;
 use crate::kernel_map::KernelVerdictMap;
 use crate::kernel_rates::KernelRateLimits;
 use crate::proc_cache::ProcInfoCache;
@@ -26,6 +27,7 @@ use crate::rules::store::{resolve_db_path, SqliteRuleStore};
 use crate::rules::types::Policy;
 
 const EVENT_BROADCAST_CAPACITY: usize = 1024;
+const THROUGHPUT_INTERVAL_SECS: u64 = 1;
 
 pub fn run() -> Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -90,6 +92,7 @@ async fn run_async() -> Result<()> {
         );
     }
     let kernel_map = Arc::new(Mutex::new(kernel_map));
+    let kernel_bytes = Arc::new(Mutex::new(KernelByteCounter::from_ebpf(&mut bpf)?));
     let kernel_rates = {
         let mut k = KernelRateLimits::from_ebpf(&mut bpf)?;
         // Reload persisted rates, skipping PIDs that no longer exist.
@@ -149,6 +152,42 @@ async fn run_async() -> Result<()> {
         })
     };
     tracing::info!(socket = %socket_path.display(), "ipc server spawned");
+
+    // Periodic throughput pusher: every interval, read TX_BYTES,
+    // compute deltas against the previous snapshot, broadcast.
+    let throughput_handle = {
+        let kernel_bytes = Arc::clone(&kernel_bytes);
+        let events_tx = events_tx.clone();
+        tokio::spawn(async move {
+            let mut prev: std::collections::HashMap<u32, u64> = std::collections::HashMap::new();
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(
+                THROUGHPUT_INTERVAL_SECS,
+            ));
+            // Skip the leading immediate tick — we want a real interval
+            // before the first delta.
+            tick.tick().await;
+            loop {
+                tick.tick().await;
+                let cur = match kernel_bytes.lock() {
+                    Ok(b) => b.snapshot(),
+                    Err(_) => continue,
+                };
+                let mut entries = Vec::with_capacity(cur.len());
+                for (pid, total) in &cur {
+                    let previous = prev.get(pid).copied().unwrap_or(0);
+                    let delta = total.saturating_sub(previous);
+                    let bps = delta / THROUGHPUT_INTERVAL_SECS;
+                    if bps > 0 {
+                        entries.push(ipc::ThroughputEntry { pid: *pid, bps });
+                    }
+                }
+                prev = cur;
+                if !entries.is_empty() {
+                    let _ = events_tx.send(ipc::Event::Throughput { entries });
+                }
+            }
+        })
+    };
 
     let mut reader = EventReader::from_ebpf(&mut bpf)?;
     let mut cache = ProcInfoCache::with_default_capacity();
@@ -232,6 +271,7 @@ async fn run_async() -> Result<()> {
     }
 
     ipc_handle.abort();
+    throughput_handle.abort();
     let _ = std::fs::remove_file(&socket_path);
 
     Ok(())

@@ -183,6 +183,17 @@ pub enum Event {
     /// ClearRate) and once at the start of a subscription so the GUI
     /// has the initial state without an explicit `ListRates` request.
     RatesChanged { entries: Vec<RateEntry> },
+    /// Periodic throughput snapshot. Pushed by the daemon every
+    /// `THROUGHPUT_INTERVAL` seconds with the per-PID egress rate
+    /// observed in the last interval.
+    Throughput { entries: Vec<ThroughputEntry> },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ThroughputEntry {
+    pub pid: u32,
+    /// Bytes per second over the previous sampling interval.
+    pub bps: u64,
 }
 
 /// Compact rule representation for the GUI. Mirrors the fields the user

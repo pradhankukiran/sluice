@@ -1,6 +1,6 @@
 //! Iced application: state, update, view, subscription.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Element, Length, Subscription, Task};
@@ -22,6 +22,10 @@ pub struct SluiceApp {
     form: RuleForm,
     rates: Vec<RateEntry>,
     rate_form: RateForm,
+    /// Latest observed bytes-per-second per PID, refreshed on
+    /// `Event::Throughput`. Used by the Bandwidth view to render a
+    /// live meter alongside the configured rate.
+    throughput: HashMap<u32, u64>,
 }
 
 #[derive(Default)]
@@ -229,6 +233,15 @@ impl SluiceApp {
             Event::RatesChanged { entries } => {
                 self.rates = entries.clone();
             }
+            Event::Throughput { entries } => {
+                // Replace rather than merge: PIDs absent from the
+                // latest tick truly observed zero bytes (otherwise the
+                // daemon would have included them).
+                self.throughput.clear();
+                for e in entries {
+                    self.throughput.insert(e.pid, e.bps);
+                }
+            }
         }
         if self.events.len() == MAX_EVENTS {
             self.events.pop_back();
@@ -312,7 +325,14 @@ impl SluiceApp {
                 .size(13)
                 .into()
         } else {
-            let rows = self.rates.iter().map(rate_row).collect::<Vec<_>>();
+            let rows = self
+                .rates
+                .iter()
+                .map(|r| {
+                    let bps = self.throughput.get(&r.pid).copied().unwrap_or(0);
+                    rate_row(r, bps)
+                })
+                .collect::<Vec<_>>();
             scrollable(column(rows).spacing(4))
                 .height(Length::Fixed(200.0))
                 .into()
@@ -467,16 +487,22 @@ fn field_row<'a>(label: &'a str, value: &str, field: FormField) -> Element<'a, M
         .into()
 }
 
-fn rate_row(r: &RateEntry) -> Element<'_, Message> {
+fn rate_row<'a>(r: &'a RateEntry, current_bps: u64) -> Element<'a, Message> {
     let rate_label = if r.rate_bps == 0 {
         "unlimited".to_string()
     } else {
         format!("{} KB/s", r.rate_bps / 1024)
     };
+    let live_label = if current_bps == 0 {
+        "idle".to_string()
+    } else {
+        format!("{} KB/s", current_bps / 1024)
+    };
     let summary = text(format!(
-        "pid={pid} rate={rate} burst={burst} B",
+        "pid={pid} rate={rate} now={live} burst={burst} B",
         pid = r.pid,
         rate = rate_label,
+        live = live_label,
         burst = r.burst_bytes,
     ))
     .size(13);
@@ -548,6 +574,11 @@ fn event_row(evt: &Event) -> Element<'_, Message> {
         }
         Event::RatesChanged { entries } => {
             format!("rates changed (now {})", entries.len())
+        }
+        Event::Throughput { .. } => {
+            // Throughput updates pour in every second; surfacing them
+            // in the events feed would be noise. Skipped.
+            return container(text("").size(13)).padding(0).into();
         }
     };
     container(text(line).size(13))
