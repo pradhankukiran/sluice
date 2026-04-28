@@ -92,6 +92,7 @@ pub enum Message {
     FormFieldChanged(FormField, String),
     AddRuleClicked,
     DeleteRule(i64),
+    SetPolicy(String),
 }
 
 impl SluiceApp {
@@ -147,6 +148,9 @@ impl SluiceApp {
             }
             Message::DeleteRule(id) => {
                 send_request(Request::DeleteRule { id });
+            }
+            Message::SetPolicy(policy) => {
+                send_request(Request::SetPolicy { policy });
             }
         }
         Task::none()
@@ -256,7 +260,35 @@ impl SluiceApp {
     }
 
     fn policy_view(&self) -> Element<'_, Message> {
-        text("policy controls — coming up").size(14).into()
+        let current = if self.default_policy.is_empty() {
+            "?".to_string()
+        } else {
+            self.default_policy.clone()
+        };
+        let header = text(format!("Default policy: {current}")).size(15);
+
+        let make_btn = |name: &'static str, value: &'static str| -> Element<'_, Message> {
+            let mut b = button(text(name)).on_press(Message::SetPolicy(value.to_string()));
+            if self.default_policy == value {
+                b = b.width(Length::Fixed(110.0));
+            }
+            b.into()
+        };
+
+        let buttons = row![
+            make_btn("Allow", "allow"),
+            make_btn("Deny", "deny"),
+            make_btn("Ask", "ask"),
+        ]
+        .spacing(8);
+
+        let help = text(
+            "Allow = pass through · Deny = block all · \
+             Ask = prompt unrecognized processes",
+        )
+        .size(12);
+
+        column![header, buttons, help].spacing(8).into()
     }
 
     fn prompts_view(&self) -> Element<'_, Message> {
