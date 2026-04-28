@@ -22,8 +22,6 @@ static REQUEST_CHANNEL: OnceLock<mpsc::UnboundedSender<Request>> = OnceLock::new
 /// Send a request to the daemon. Drops silently when the IPC
 /// subscription hasn't been started yet (during the first 1–2 frames
 /// after launch) or when the underlying channel has been closed.
-// Wired into the prompt UI in the next commit.
-#[allow(dead_code)]
 pub fn send_request(req: Request) {
     if let Some(tx) = REQUEST_CHANNEL.get() {
         let _ = tx.send(req);

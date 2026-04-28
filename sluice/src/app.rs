@@ -2,12 +2,12 @@
 
 use std::collections::VecDeque;
 
-use iced::widget::{column, container, scrollable, text};
+use iced::widget::{button, column, container, row, scrollable, text};
 use iced::{Element, Length, Subscription, Task};
-use sluice_common::ipc::{Event, RuleSummary};
+use sluice_common::ipc::{Event, Request, RuleSummary};
 
 use crate::ipc_client::ClientMessage;
-use crate::subscription::ipc_subscription;
+use crate::subscription::{ipc_subscription, send_request};
 
 const MAX_EVENTS: usize = 500;
 
@@ -17,6 +17,17 @@ pub struct SluiceApp {
     rules: Vec<RuleSummary>,
     default_policy: String,
     events: VecDeque<Event>,
+    pending_prompts: VecDeque<PendingPrompt>,
+}
+
+#[derive(Clone)]
+struct PendingPrompt {
+    pid: u32,
+    exe: Option<String>,
+    family: String,
+    addr: String,
+    dport: u16,
+    protocol: String,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -35,6 +46,8 @@ pub enum ConnectionStatus {
 #[derive(Debug, Clone)]
 pub enum Message {
     Ipc(ClientMessage),
+    Allow(u32),
+    Deny(u32),
 }
 
 impl SluiceApp {
@@ -58,23 +71,78 @@ impl SluiceApp {
                 self.default_policy = default_policy;
             }
             Message::Ipc(ClientMessage::Event(event)) => {
-                if self.events.len() == MAX_EVENTS {
-                    self.events.pop_back();
-                }
-                self.events.push_front(event);
+                self.absorb_event(event);
             }
             Message::Ipc(ClientMessage::Disconnected { reason }) => {
                 self.status = ConnectionStatus::Disconnected { reason };
             }
+            Message::Allow(pid) => self.dispatch_verdict(pid, "allow"),
+            Message::Deny(pid) => self.dispatch_verdict(pid, "deny"),
         }
         Task::none()
     }
 
+    fn absorb_event(&mut self, event: Event) {
+        match &event {
+            Event::Connection { .. } => {}
+            Event::Prompt {
+                pid,
+                exe,
+                family,
+                addr,
+                dport,
+                protocol,
+                ..
+            } => {
+                if !self.pending_prompts.iter().any(|p| p.pid == *pid) {
+                    self.pending_prompts.push_back(PendingPrompt {
+                        pid: *pid,
+                        exe: exe.clone(),
+                        family: family.clone(),
+                        addr: addr.clone(),
+                        dport: *dport,
+                        protocol: protocol.clone(),
+                    });
+                }
+            }
+        }
+        if self.events.len() == MAX_EVENTS {
+            self.events.pop_back();
+        }
+        self.events.push_front(event);
+    }
+
+    fn dispatch_verdict(&mut self, pid: u32, verdict: &str) {
+        self.pending_prompts.retain(|p| p.pid != pid);
+        send_request(Request::SetVerdict {
+            pid,
+            verdict: verdict.to_string(),
+        });
+    }
+
     pub fn view(&self) -> Element<'_, Message> {
-        column![self.header(), self.events_view()]
+        column![self.header(), self.prompts_view(), self.events_view()]
             .spacing(12)
             .padding(16)
             .into()
+    }
+
+    fn prompts_view(&self) -> Element<'_, Message> {
+        if self.pending_prompts.is_empty() {
+            return column![].into();
+        }
+        let header = text(format!(
+            "Pending prompts ({})",
+            self.pending_prompts.len()
+        ))
+        .size(16);
+
+        let rows = self
+            .pending_prompts
+            .iter()
+            .map(prompt_row)
+            .collect::<Vec<_>>();
+        column![header, column(rows).spacing(6)].spacing(8).into()
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -124,6 +192,31 @@ impl SluiceApp {
 
         column![header, body].spacing(8).into()
     }
+}
+
+fn prompt_row(p: &PendingPrompt) -> Element<'_, Message> {
+    let label = p.exe.clone().unwrap_or_else(|| "(no exe)".to_string());
+    let dst = if p.family == "ipv6" {
+        format!("[{}]:{}", p.addr, p.dport)
+    } else {
+        format!("{}:{}", p.addr, p.dport)
+    };
+    let summary = text(format!(
+        "{label} pid={pid} -> {dst} ({proto})",
+        pid = p.pid,
+        proto = p.protocol,
+    ))
+    .size(13);
+    let allow = button("Allow").on_press(Message::Allow(p.pid));
+    let deny = button("Deny").on_press(Message::Deny(p.pid));
+    container(
+        row![summary, allow, deny]
+            .spacing(8)
+            .align_y(iced::Alignment::Center),
+    )
+    .padding(6)
+    .width(Length::Fill)
+    .into()
 }
 
 fn event_row(evt: &Event) -> Element<'_, Message> {
