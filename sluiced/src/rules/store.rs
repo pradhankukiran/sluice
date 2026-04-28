@@ -8,6 +8,7 @@
 //! '.dump rules'`. Encoding/decoding lives in this file; the rest of the
 //! daemon never sees the wire format.
 
+use std::env;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -24,6 +25,25 @@ use crate::rules::types::{ExeMatch, HostMatch, Policy, PortMatch, ProtocolMatch,
 /// can switch to `Deny` or (post-phase-7) `Ask` via `policy set`.
 const DEFAULT_POLICY: Policy = Policy::Allow;
 const SETTING_DEFAULT_POLICY: &str = "default_policy";
+
+const ENV_DB_PATH: &str = "SLUICE_DB_PATH";
+const SYSTEM_DB_PATH: &str = "/var/lib/sluice/rules.db";
+
+/// Resolve the on-disk path for the rules database.
+///
+/// Order:
+///
+/// 1. `SLUICE_DB_PATH` environment variable (used in tests and for
+///    development without root).
+/// 2. The system path `/var/lib/sluice/rules.db`. The daemon runs as
+///    root in production (eBPF requires `CAP_BPF`), so the parent
+///    directory is created on `open` if missing.
+pub fn resolve_db_path() -> PathBuf {
+    if let Ok(v) = env::var(ENV_DB_PATH) {
+        return PathBuf::from(v);
+    }
+    PathBuf::from(SYSTEM_DB_PATH)
+}
 
 pub struct SqliteRuleStore {
     conn: Connection,
@@ -323,6 +343,20 @@ mod tests {
         let mut r = sample_rule();
         r.verdict = Verdict::Unknown;
         assert!(store.insert(&r).is_err());
+    }
+
+    #[test]
+    fn env_override_wins() {
+        // SAFETY: tests in this binary run sequentially within a single
+        // process; mutating the environment is acceptable because no
+        // other test reads SLUICE_DB_PATH concurrently.
+        unsafe { env::set_var(ENV_DB_PATH, "/tmp/sluice-override.db") };
+        assert_eq!(
+            resolve_db_path(),
+            PathBuf::from("/tmp/sluice-override.db")
+        );
+        unsafe { env::remove_var(ENV_DB_PATH) };
+        assert_eq!(resolve_db_path(), PathBuf::from(SYSTEM_DB_PATH));
     }
 
     #[test]
