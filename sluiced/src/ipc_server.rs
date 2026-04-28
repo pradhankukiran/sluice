@@ -22,22 +22,21 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::broadcast;
 
+use crate::dns_cache::DnsCache;
 use crate::kernel_map::KernelVerdictMap;
 use crate::proc_info::ProcInfo;
 use crate::rules::store::SqliteRuleStore;
 use crate::rules::types::{ExeMatch, HostMatch, Policy, PortMatch, ProtocolMatch, Rule};
 
-/// Shared state the IPC server mutates on behalf of clients. `store`
-/// is wired in for the AddRule / DeleteRule handlers in the next
-/// commit; for now it would otherwise warn dead.
+/// Shared state the IPC server mutates on behalf of clients.
 #[derive(Clone)]
 pub struct DaemonHandle {
     pub kernel_map: Arc<Mutex<KernelVerdictMap>>,
     pub pending_prompts: Arc<Mutex<HashSet<u32>>>,
     pub rules: Arc<RwLock<Vec<Rule>>>,
     pub policy: Arc<RwLock<Policy>>,
-    #[allow(dead_code)]
     pub store: Arc<Mutex<SqliteRuleStore>>,
+    pub dns_cache: Arc<RwLock<DnsCache>>,
 }
 
 impl DaemonHandle {
@@ -71,6 +70,22 @@ impl DaemonHandle {
         km.clear_all()?;
         let (_, _) = km.populate_from_proc(&rules_guard)?;
         Ok(())
+    }
+
+    /// Refresh the DNS cache for hostnames newly present in the rules.
+    /// Spawned as a tokio task because resolution is async; the rule
+    /// mutation handler returns immediately and the new hostnames
+    /// become matchable when the spawned task completes.
+    fn spawn_refresh_dns(&self) {
+        let rules = Arc::clone(&self.rules);
+        let dns_cache = Arc::clone(&self.dns_cache);
+        tokio::spawn(async move {
+            let snapshot = match rules.read() {
+                Ok(g) => g.clone(),
+                Err(_) => return,
+            };
+            crate::dns_cache::refresh_shared(dns_cache, &snapshot).await;
+        });
     }
 }
 
@@ -382,6 +397,7 @@ fn apply_add_rule(
     if let Err(e) = handle.refresh_kernel_map() {
         tracing::warn!(error = %e, "refresh_kernel_map failed after AddRule");
     }
+    handle.spawn_refresh_dns();
 
     tracing::info!(rule_id = id, "rule added via IPC");
     Response::RuleAdded { id }
@@ -414,6 +430,7 @@ fn apply_delete_rule(handle: &DaemonHandle, id: i64) -> Response {
     if let Err(e) = handle.refresh_kernel_map() {
         tracing::warn!(error = %e, "refresh_kernel_map failed after DeleteRule");
     }
+    handle.spawn_refresh_dns();
 
     tracing::info!(rule_id = id, "rule deleted via IPC");
     Response::RuleDeleted { id }

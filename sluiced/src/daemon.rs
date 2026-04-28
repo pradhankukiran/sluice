@@ -13,6 +13,7 @@ use tokio::sync::broadcast;
 
 use crate::attach;
 use crate::cgroup;
+use crate::dns_cache::DnsCache;
 use crate::ebpf_loader;
 use crate::formatter;
 use crate::ipc_server;
@@ -54,6 +55,21 @@ async fn run_async() -> Result<()> {
     let policy = Arc::new(RwLock::new(initial_policy));
     let store = Arc::new(Mutex::new(store));
 
+    // Pre-resolve every hostname referenced by current rules so the
+    // matcher can apply HostMatch::Hostname rules from the very first
+    // event. Failures here are logged inside refresh_for_rules and do
+    // not block daemon startup.
+    let dns_cache = {
+        let mut cache = DnsCache::new();
+        let snapshot = rules.read().expect("rules lock").clone();
+        cache.refresh_for_rules(&snapshot).await;
+        Arc::new(RwLock::new(cache))
+    };
+    tracing::info!(
+        cached_hostnames = dns_cache.read().expect("dns lock").len(),
+        "DNS cache primed"
+    );
+
     let cgroup_root = cgroup::resolve()?;
     tracing::info!(path = %cgroup_root.display(), "cgroup v2 root resolved");
 
@@ -90,6 +106,7 @@ async fn run_async() -> Result<()> {
         rules: Arc::clone(&rules),
         policy: Arc::clone(&policy),
         store: Arc::clone(&store),
+        dns_cache: Arc::clone(&dns_cache),
     };
     let ipc_handle = {
         let events_tx = events_tx.clone();
@@ -139,7 +156,9 @@ async fn run_async() -> Result<()> {
                 }
             }
 
-            let rule_verdict = matcher::evaluate(&rules_guard, event, info, None);
+            let dns_guard = dns_cache.read().ok();
+            let rule_verdict =
+                matcher::evaluate(&rules_guard, event, info, dns_guard.as_deref());
 
             // Under Ask, an unmatched event triggers a one-shot prompt
             // (deduped per PID) and resolves to "allow" for *this*

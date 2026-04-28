@@ -16,6 +16,7 @@
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -86,34 +87,77 @@ impl DnsCache {
         self.entries.is_empty()
     }
 
-    /// Resolve every `HostMatch::Hostname` referenced by `rules` whose
-    /// cached entry is missing or stale, populating the cache. Already-
-    /// fresh entries are left untouched. Failures per hostname are
-    /// logged and skipped so one DNS hiccup doesn't break the batch.
-    pub async fn refresh_for_rules(&mut self, rules: &[Rule]) {
+    /// Hostnames referenced by `rules` whose cache entry is missing or
+    /// stale. Returned in a stable order; callers feed this list into
+    /// [`resolve`] outside any lock and then push the results back via
+    /// [`apply_resolutions`].
+    pub fn stale_targets(&self, rules: &[Rule]) -> Vec<String> {
+        let now = Instant::now();
         let mut targets: Vec<String> = rules
             .iter()
             .filter_map(|r| match &r.host {
                 HostMatch::Hostname(h) => Some(h.clone()),
                 _ => None,
             })
+            .filter(|h| match self.entries.get(h) {
+                Some(entry) => entry.expires_at <= now,
+                None => true,
+            })
             .collect();
         targets.sort();
         targets.dedup();
+        targets
+    }
 
-        let now = Instant::now();
+    /// Insert a batch of resolutions, replacing any existing entries.
+    pub fn apply_resolutions(
+        &mut self,
+        resolutions: Vec<(String, Vec<IpAddr>)>,
+        ttl: Duration,
+    ) {
+        for (name, addrs) in resolutions {
+            self.insert(&name, addrs, ttl);
+        }
+    }
+
+    /// Owned-mut variant of the refresh workflow. Used at daemon
+    /// startup when the cache is not yet behind an `Arc<RwLock>`. Holds
+    /// `&mut self` across await points; do not call from contexts where
+    /// the cache is shared.
+    pub async fn refresh_for_rules(&mut self, rules: &[Rule]) {
+        let targets = self.stale_targets(rules);
         for hostname in targets {
-            if let Some(entry) = self.entries.get(&hostname) {
-                if entry.expires_at > now {
-                    continue;
-                }
-            }
             match resolve(&hostname).await {
                 Ok(addrs) => self.insert(&hostname, addrs, DEFAULT_TTL),
                 Err(err) => {
                     tracing::warn!(hostname, error = %err, "DNS resolve failed");
                 }
             }
+        }
+    }
+}
+
+/// Refresh a shared `DnsCache` against the given rules without ever
+/// holding the write lock across `.await`. Lock-then-snapshot, resolve,
+/// lock-then-apply — the pattern that lets this run inside a
+/// `tokio::spawn` whose future must be `Send`.
+pub async fn refresh_shared(cache: Arc<RwLock<DnsCache>>, rules: &[Rule]) {
+    let targets = match cache.read() {
+        Ok(g) => g.stale_targets(rules),
+        Err(_) => return,
+    };
+    let mut resolved: Vec<(String, Vec<IpAddr>)> = Vec::with_capacity(targets.len());
+    for hostname in targets {
+        match resolve(&hostname).await {
+            Ok(addrs) => resolved.push((hostname, addrs)),
+            Err(err) => {
+                tracing::warn!(hostname, error = %err, "DNS resolve failed");
+            }
+        }
+    }
+    if !resolved.is_empty() {
+        if let Ok(mut g) = cache.write() {
+            g.apply_resolutions(resolved, DEFAULT_TTL);
         }
     }
 }
