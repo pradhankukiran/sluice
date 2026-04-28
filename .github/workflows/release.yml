@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to create the release + upload assets
+
+jobs:
+  build-deb:
+    name: Build .deb (linux/amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GUI system deps (iced backend)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev libfontconfig1-dev pkg-config
+
+      - name: Install Rust stable (userspace) toolchain
+        run: rustup show
+
+      - name: Install nightly toolchain for the eBPF crate
+        run: |
+          # Pinned in sluice-ebpf/rust-toolchain.toml; running `rustup show`
+          # inside that crate's dir installs the right channel.
+          (cd sluice-ebpf && rustup show)
+
+      - name: Install bpf-linker
+        run: cargo install bpf-linker --locked
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb --locked
+
+      - name: Cache cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            sluice-ebpf/target
+          key: ${{ runner.os }}-release-${{ hashFiles('**/Cargo.toml', '**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-release-
+
+      - name: Build kernel-side eBPF object
+        run: cargo run -p xtask -- build-ebpf
+
+      - name: Build release binaries (sluiced, sluice)
+        run: cargo build --release --workspace
+
+      - name: Build .deb
+        run: cargo deb -p sluiced --no-build
+
+      - name: Locate produced .deb
+        id: deb
+        run: |
+          path=$(ls target/debian/sluiced_*.deb | head -1)
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename $path)" >> "$GITHUB_OUTPUT"
+          ls -la target/debian/
+
+      - name: Upload deb as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.deb.outputs.name }}
+          path: ${{ steps.deb.outputs.path }}
+          if-no-files-found: error
+
+      - name: Attach .deb to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.deb.outputs.path }}
+          draft: false
+          generate_release_notes: true
