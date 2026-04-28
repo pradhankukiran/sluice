@@ -1,0 +1,12 @@
+#!/bin/sh
+# Pre-remove hook: stop and disable the service before the binary
+# disappears, so systemd doesn't report a failure on the way out.
+
+set -e
+
+if [ -d /run/systemd/system ]; then
+    systemctl stop sluiced.service >/dev/null 2>&1 || true
+    systemctl disable sluiced.service >/dev/null 2>&1 || true
+fi
+
+exit 0
