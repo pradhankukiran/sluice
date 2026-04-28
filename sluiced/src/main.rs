@@ -9,6 +9,7 @@ mod ebpf_loader;
 mod formatter;
 mod ipc_server;
 mod kernel_map;
+mod kernel_rates;
 mod proc_cache;
 mod proc_info;
 mod ring_reader;
