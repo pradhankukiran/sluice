@@ -179,8 +179,13 @@ impl SluiceApp {
                     });
                 }
             }
-            // Phase 8 task 72 wires rules + policy refresh in.
-            Event::RulesChanged { .. } => {}
+            Event::RulesChanged {
+                rules,
+                default_policy,
+            } => {
+                self.rules = rules.clone();
+                self.default_policy = default_policy.clone();
+            }
         }
         if self.events.len() == MAX_EVENTS {
             self.events.pop_back();
