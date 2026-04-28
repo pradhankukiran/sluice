@@ -178,9 +178,7 @@ fn parse_exe(s: &str) -> Result<ExeMatch> {
         return Ok(ExeMatch::Any);
     }
     if !s.starts_with('/') {
-        return Err(anyhow!(
-            "exe must be `any` or an absolute path, got `{s}`"
-        ));
+        return Err(anyhow!("exe must be `any` or an absolute path, got `{s}`"));
     }
     Ok(ExeMatch::Exact(std::path::PathBuf::from(s)))
 }
@@ -193,8 +191,8 @@ fn parse_host(s: &str) -> Result<HostMatch> {
         return Ok(HostMatch::Any);
     }
     if let Some((net, prefix)) = s.split_once('/') {
-        let network = IpAddr::from_str(net)
-            .map_err(|e| anyhow!("invalid CIDR network `{net}`: {e}"))?;
+        let network =
+            IpAddr::from_str(net).map_err(|e| anyhow!("invalid CIDR network `{net}`: {e}"))?;
         let prefix_len: u8 = prefix
             .parse()
             .map_err(|e| anyhow!("invalid CIDR prefix `{prefix}`: {e}"))?;
@@ -226,8 +224,7 @@ fn parse_port(s: &str) -> Result<PortMatch> {
         });
     }
     Ok(PortMatch::Single(
-        s.parse()
-            .map_err(|e| anyhow!("invalid port `{s}`: {e}"))?,
+        s.parse().map_err(|e| anyhow!("invalid port `{s}`: {e}"))?,
     ))
 }
 

@@ -68,11 +68,9 @@ mod tests {
         apply_migrations(&conn).unwrap();
 
         let version: u32 = conn
-            .query_row(
-                "SELECT MAX(version) FROM schema_version",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT MAX(version) FROM schema_version", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(version, MIGRATIONS.len() as u32);
     }

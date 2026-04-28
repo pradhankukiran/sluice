@@ -48,7 +48,10 @@ pub enum PortMatch {
     Any,
     Single(u16),
     /// Inclusive on both ends.
-    Range { start: u16, end_inclusive: u16 },
+    Range {
+        start: u16,
+        end_inclusive: u16,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -94,9 +94,8 @@ impl SqliteRuleStore {
              FROM rules
              ORDER BY id",
         )?;
-        let rows: Vec<rusqlite::Result<Result<Rule>>> = stmt
-            .query_map([], |row| Ok(decode_rule(row)))?
-            .collect();
+        let rows: Vec<rusqlite::Result<Result<Rule>>> =
+            stmt.query_map([], |row| Ok(decode_rule(row)))?.collect();
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
             out.push(row??);
@@ -349,10 +348,7 @@ mod tests {
         // process; mutating the environment is acceptable because no
         // other test reads SLUICE_DB_PATH concurrently.
         unsafe { env::set_var(ENV_DB_PATH, "/tmp/sluice-override.db") };
-        assert_eq!(
-            resolve_db_path(),
-            PathBuf::from("/tmp/sluice-override.db")
-        );
+        assert_eq!(resolve_db_path(), PathBuf::from("/tmp/sluice-override.db"));
         unsafe { env::remove_var(ENV_DB_PATH) };
         assert_eq!(resolve_db_path(), PathBuf::from(SYSTEM_DB_PATH));
     }
