@@ -10,7 +10,22 @@
 //! depends on `sluice-common` with `default-features = false` and
 //! never compiles this code.
 
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
+
+pub const SOCKET_ENV: &str = "SLUICE_SOCKET_PATH";
+pub const DEFAULT_SOCKET_PATH: &str = "/run/sluice/sluice.sock";
+
+/// Resolve the Unix socket path used by both daemon and GUI. The daemon
+/// creates the socket; the GUI connects to it. Override via the
+/// `SLUICE_SOCKET_PATH` environment variable for development without
+/// `/run/sluice` write access.
+pub fn resolve_socket_path() -> PathBuf {
+    std::env::var(SOCKET_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(DEFAULT_SOCKET_PATH))
+}
 
 /// Top-level wire frame. Tagged so the same socket can carry both
 /// request/response pairs and asynchronous server-pushed events.
@@ -104,6 +119,18 @@ mod tests {
         let s = serde_json::to_string(&f).unwrap();
         let back: Frame = serde_json::from_str(&s).unwrap();
         assert_eq!(f, back);
+    }
+
+    #[test]
+    fn socket_path_env_override_wins() {
+        // SAFETY: tests in this binary run sequentially within one process.
+        unsafe { std::env::set_var(SOCKET_ENV, "/tmp/sluice-ipc-test.sock") };
+        assert_eq!(
+            resolve_socket_path(),
+            PathBuf::from("/tmp/sluice-ipc-test.sock")
+        );
+        unsafe { std::env::remove_var(SOCKET_ENV) };
+        assert_eq!(resolve_socket_path(), PathBuf::from(DEFAULT_SOCKET_PATH));
     }
 
     #[test]
