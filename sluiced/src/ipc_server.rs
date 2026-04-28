@@ -241,6 +241,18 @@ pub fn build_connection_event(e: &ConnectEvent, info: &ProcInfo, verdict: Verdic
     }
 }
 
+pub fn build_prompt_event(e: &ConnectEvent, info: &ProcInfo) -> Event {
+    Event::Prompt {
+        pid: e.tgid,
+        exe: info.exe.as_ref().map(|p| p.display().to_string()),
+        cmdline: info.cmdline.clone(),
+        family: family_str(e.family).to_string(),
+        protocol: protocol_str(e.protocol).to_string(),
+        addr: format_addr(e),
+        dport: e.dport,
+    }
+}
+
 fn rule_summary(rule: &Rule) -> RuleSummary {
     RuleSummary {
         id: rule.id,

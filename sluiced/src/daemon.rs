@@ -3,7 +3,8 @@
 //! Splits cleanly from the CLI subcommand handlers so non-daemon code
 //! paths (`rules add`, `policy show`, ...) don't drag in eBPF or tokio.
 
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use sluice_common::ipc::{self, resolve_socket_path};
@@ -44,16 +45,15 @@ async fn run_async() -> Result<()> {
         default_policy = policy.as_str(),
         "rule store loaded"
     );
+    // For Allow / Deny we have a static fallback verdict; for Ask we
+    // dispatch to the prompt path below and treat the *current* event as
+    // allow (the kernel can't block while waiting for the user — phase
+    // 7 is mode-B "first slips through"). Subsequent events from the
+    // same PID hit the kernel verdict map after SetVerdict lands.
     let fallback_verdict = match policy {
         Policy::Allow => Verdict::Allow,
         Policy::Deny => Verdict::Deny,
-        Policy::Ask => {
-            tracing::warn!(
-                "default_policy=ask requires the GUI prompt path (phase 7); \
-                 phase 4 falls back to allow"
-            );
-            Verdict::Allow
-        }
+        Policy::Ask => Verdict::Allow,
     };
 
     let cgroup_root = cgroup::resolve()?;
@@ -96,6 +96,7 @@ async fn run_async() -> Result<()> {
 
     let mut reader = EventReader::from_ebpf(&mut bpf)?;
     let mut cache = ProcInfoCache::with_default_capacity();
+    let pending_prompts: Arc<Mutex<HashSet<u32>>> = Arc::new(Mutex::new(HashSet::new()));
     tracing::info!("event reader ready, watching for connections");
 
     tokio::select! {
@@ -116,7 +117,24 @@ async fn run_async() -> Result<()> {
                 }
             }
 
-            let verdict = matcher::evaluate(&rules, event, info).unwrap_or(fallback_verdict);
+            let rule_verdict = matcher::evaluate(&rules, event, info);
+
+            // Under Ask, an unmatched event triggers a one-shot prompt
+            // (deduped per PID) and resolves to "allow" for *this*
+            // connection. Subsequent connects from the same PID will
+            // honour the user's verdict once SetVerdict updates the
+            // kernel map.
+            if rule_verdict.is_none() && policy == Policy::Ask {
+                let newly_pending = pending_prompts
+                    .lock()
+                    .map(|mut set| set.insert(event.tgid))
+                    .unwrap_or(false);
+                if newly_pending {
+                    let _ = events_tx.send(ipc_server::build_prompt_event(event, info));
+                }
+            }
+
+            let verdict = rule_verdict.unwrap_or(fallback_verdict);
             tracing::info!(
                 target: "sluice::connect",
                 verdict = verdict_str(verdict),
