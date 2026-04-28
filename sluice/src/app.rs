@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Element, Length, Subscription, Task};
-use sluice_common::ipc::{Event, Request, RuleSummary};
+use sluice_common::ipc::{Event, RateEntry, Request, RuleSummary};
 
 use crate::ipc_client::ClientMessage;
 use crate::subscription::{ipc_subscription, send_request};
@@ -20,6 +20,16 @@ pub struct SluiceApp {
     pending_prompts: VecDeque<PendingPrompt>,
     tab: Tab,
     form: RuleForm,
+    rates: Vec<RateEntry>,
+    rate_form: RateForm,
+}
+
+// Form fields wired into the Bandwidth view in the next commit.
+#[allow(dead_code)]
+#[derive(Default)]
+struct RateForm {
+    pid: String,
+    rate_kbps: String,
 }
 
 #[derive(Default)]
@@ -58,6 +68,7 @@ pub enum Tab {
     Events,
     Rules,
     Policy,
+    Bandwidth,
 }
 
 #[derive(Clone)]
@@ -186,8 +197,9 @@ impl SluiceApp {
                 self.rules = rules.clone();
                 self.default_policy = default_policy.clone();
             }
-            // Bandwidth tab + state hookup arrives in the next commit.
-            Event::RatesChanged { .. } => {}
+            Event::RatesChanged { entries } => {
+                self.rates = entries.clone();
+            }
         }
         if self.events.len() == MAX_EVENTS {
             self.events.pop_back();
@@ -208,6 +220,7 @@ impl SluiceApp {
             Tab::Events => self.events_view(),
             Tab::Rules => self.rules_view(),
             Tab::Policy => self.policy_view(),
+            Tab::Bandwidth => self.bandwidth_view(),
         };
         column![self.header(), self.tab_bar(), self.prompts_view(), tab_view]
             .spacing(12)
@@ -230,6 +243,7 @@ impl SluiceApp {
             make("Events", Tab::Events),
             make("Rules", Tab::Rules),
             make("Policy", Tab::Policy),
+            make("Bandwidth", Tab::Bandwidth),
         ]
         .spacing(6)
         .into()
@@ -259,6 +273,13 @@ impl SluiceApp {
         .spacing(6);
 
         column![header, list, form_label, form].spacing(10).into()
+    }
+
+    fn bandwidth_view(&self) -> Element<'_, Message> {
+        // Real implementation arrives in the next commit (task 93).
+        text(format!("Rate limits ({})", self.rates.len()))
+            .size(14)
+            .into()
     }
 
     fn policy_view(&self) -> Element<'_, Message> {
