@@ -7,10 +7,20 @@ use sluice_common::event::{
     ConnectEvent, COMM_LEN, FAMILY_INET, FAMILY_INET6, PROTO_TCP, PROTO_UDP,
 };
 
-pub fn format_event(e: &ConnectEvent) -> String {
+use crate::proc_info::ProcInfo;
+
+/// Render a connection event with the resolved executable path from
+/// [`ProcInfo`] as the process label. Falls back to the kernel's 16-byte
+/// `comm` for kernel threads or processes that exited before we resolved
+/// `/proc/<pid>/exe`.
+pub fn format_enriched_event(e: &ConnectEvent, info: &ProcInfo) -> String {
+    let label = info
+        .exe
+        .as_ref()
+        .map(|exe| exe.display().to_string())
+        .unwrap_or_else(|| comm_str(&e.comm));
     format!(
-        "{comm} pid={pid} uid={uid} -> {dst} ({proto})",
-        comm = comm_str(&e.comm),
+        "{label} pid={pid} uid={uid} -> {dst} ({proto})",
         pid = e.tgid,
         uid = e.uid,
         dst = format_destination(e),
@@ -74,8 +84,9 @@ mod tests {
         let mut addr = [0u8; 16];
         addr[..4].copy_from_slice(&[140, 82, 121, 4]); // GitHub
         let event = sample(FAMILY_INET, addr, 443);
+        let info = fake_proc_info(None);
         assert_eq!(
-            format_event(&event),
+            format_enriched_event(&event, &info),
             "firefox pid=4040 uid=1000 -> 140.82.121.4:443 (TCP)"
         );
     }
@@ -90,23 +101,52 @@ mod tests {
         addr[3] = 0xb8;
         addr[15] = 0x01;
         let event = sample(FAMILY_INET6, addr, 443);
+        let info = fake_proc_info(None);
         assert_eq!(
-            format_event(&event),
+            format_enriched_event(&event, &info),
             "firefox pid=4040 uid=1000 -> [2001:db8::1]:443 (TCP)"
         );
     }
 
+    fn fake_proc_info(exe: Option<&str>) -> ProcInfo {
+        ProcInfo {
+            pid: 4040,
+            start_time: 0,
+            exe: exe.map(std::path::PathBuf::from),
+            cmdline: vec![],
+        }
+    }
+
+    #[test]
+    fn enriched_event_prefers_exe_path_over_comm() {
+        let mut addr = [0u8; 16];
+        addr[..4].copy_from_slice(&[140, 82, 121, 4]);
+        let event = sample(FAMILY_INET, addr, 443);
+        let info = fake_proc_info(Some("/usr/lib/firefox/firefox"));
+        assert_eq!(
+            format_enriched_event(&event, &info),
+            "/usr/lib/firefox/firefox pid=4040 uid=1000 -> 140.82.121.4:443 (TCP)"
+        );
+    }
+
+    #[test]
+    fn enriched_event_falls_back_to_comm_when_exe_missing() {
+        let mut addr = [0u8; 16];
+        addr[..4].copy_from_slice(&[1, 1, 1, 1]);
+        let event = sample(FAMILY_INET, addr, 53);
+        let info = fake_proc_info(None);
+        // comm in `sample` is "firefox".
+        assert!(format_enriched_event(&event, &info).starts_with("firefox pid="));
+    }
+
     #[test]
     fn truncated_comm_does_not_overrun() {
-        let mut comm = [b'x'; COMM_LEN];
+        let comm = [b'x'; COMM_LEN];
         // No null terminator at all — comm fills the full 16 bytes.
         let mut event = sample(FAMILY_INET, [0; 16], 80);
         event.comm = comm;
-        // Smoke test: we should print all 16 bytes.
-        let s = format_event(&event);
+        let info = fake_proc_info(None);
+        let s = format_enriched_event(&event, &info);
         assert!(s.contains(&"x".repeat(COMM_LEN)));
-        // Touch comm to suppress unused_mut.
-        comm[0] = 0;
-        assert_eq!(comm[0], 0);
     }
 }

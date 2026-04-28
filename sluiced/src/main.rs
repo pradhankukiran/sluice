@@ -44,16 +44,11 @@ async fn main() -> Result<()> {
     tokio::select! {
         result = reader.run(|event| {
             let info = cache.lookup_or_fetch(event.tgid);
-            let exe = info
-                .exe
-                .as_ref()
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|| "?".to_string());
             tracing::info!(
                 target: "sluice::connect",
-                exe = %exe,
+                cmdline = ?info.cmdline,
                 "{}",
-                formatter::format_event(event),
+                formatter::format_enriched_event(event, info),
             );
         }) => {
             result?;
