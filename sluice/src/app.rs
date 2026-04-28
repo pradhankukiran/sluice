@@ -22,6 +22,7 @@ pub struct SluiceApp {
     form: RuleForm,
     rates: Vec<RateEntry>,
     rate_form: RateForm,
+    rate_form_error: Option<String>,
     /// Latest observed bytes-per-second per PID, refreshed on
     /// `Event::Throughput`. Used by the Bandwidth view to render a
     /// live meter alongside the configured rate.
@@ -178,12 +179,8 @@ impl SluiceApp {
                 RateField::Pid => self.rate_form.pid = value,
                 RateField::RateKbps => self.rate_form.rate_kbps = value,
             },
-            Message::AddRate => {
-                if let (Ok(pid), Ok(rate_kbps)) = (
-                    self.rate_form.pid.parse::<u32>(),
-                    self.rate_form.rate_kbps.parse::<u64>(),
-                ) {
-                    let rate_bps = rate_kbps.saturating_mul(1024);
+            Message::AddRate => match self.parse_rate_form() {
+                Ok((pid, rate_bps)) => {
                     send_request(Request::SetRate {
                         pid,
                         rate_bps,
@@ -191,8 +188,12 @@ impl SluiceApp {
                         burst_bytes: rate_bps,
                     });
                     self.rate_form = RateForm::default();
+                    self.rate_form_error = None;
                 }
-            }
+                Err(msg) => {
+                    self.rate_form_error = Some(msg);
+                }
+            },
             Message::ClearRate(pid) => {
                 send_request(Request::ClearRate { pid });
             }
@@ -247,6 +248,22 @@ impl SluiceApp {
             self.events.pop_back();
         }
         self.events.push_front(event);
+    }
+
+    fn parse_rate_form(&self) -> Result<(u32, u64), String> {
+        let pid: u32 = self
+            .rate_form
+            .pid
+            .trim()
+            .parse()
+            .map_err(|_| format!("invalid pid `{}`", self.rate_form.pid))?;
+        let rate_kbps: u64 = self
+            .rate_form
+            .rate_kbps
+            .trim()
+            .parse()
+            .map_err(|_| format!("invalid rate `{}` (KB/s)", self.rate_form.rate_kbps))?;
+        Ok((pid, rate_kbps.saturating_mul(1024)))
     }
 
     fn dispatch_verdict(&mut self, pid: u32, verdict: &str) {
@@ -347,7 +364,7 @@ impl SluiceApp {
             .on_input(|v| Message::RateFieldChanged(RateField::RateKbps, v))
             .padding(4)
             .width(Length::Fixed(220.0));
-        let form = column![
+        let mut form = column![
             row![text("pid").size(13).width(Length::Fixed(80.0)), pid_input]
                 .spacing(6)
                 .align_y(iced::Alignment::Center),
@@ -360,6 +377,13 @@ impl SluiceApp {
             button("Apply limit").on_press(Message::AddRate),
         ]
         .spacing(6);
+        if let Some(msg) = &self.rate_form_error {
+            form = form.push(
+                text(msg.clone())
+                    .size(12)
+                    .color(iced::Color::from_rgb(0.8, 0.2, 0.2)),
+            );
+        }
 
         column![header, list, form_label, form].spacing(10).into()
     }
