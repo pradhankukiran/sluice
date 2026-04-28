@@ -1,0 +1,18 @@
+[package]
+name = "sluice-common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Types shared between sluice-ebpf (kernel) and sluice/sluiced (userspace)."
+
+[features]
+default = ["std"]
+# Userspace builds enable `std` for serde and Display impls. The eBPF crate
+# depends on this with `default-features = false` to stay no_std.
+std = ["serde/std"]
+
+[dependencies]
+serde = { workspace = true, default-features = false, features = ["derive"], optional = false }
