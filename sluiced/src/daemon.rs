@@ -91,10 +91,15 @@ async fn run_async() -> Result<()> {
     let kernel_map = Arc::new(Mutex::new(kernel_map));
     let pending_prompts: Arc<Mutex<HashSet<u32>>> = Arc::new(Mutex::new(HashSet::new()));
 
-    let programs = attach::attach_connect_programs(&mut bpf, &cgroup_root)?;
+    let programs = attach::attach_cgroup_programs(&mut bpf, &cgroup_root)?;
     for name in &programs {
         tracing::info!(program = name, "attached to cgroup");
     }
+    let tc_attached = attach::attach_tc_egress_to_all_interfaces(&mut bpf)?;
+    tracing::info!(
+        interfaces = tc_attached.len(),
+        "tc-bpf egress classifier attached"
+    );
 
     // Spin up the IPC server before entering the event loop so the GUI
     // can connect as soon as `sluiced` reports it's ready.
