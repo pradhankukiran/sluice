@@ -8,5 +8,7 @@
 //! depend on libstd.
 
 pub mod event;
+pub mod verdict;
 
 pub use event::ConnectEvent;
+pub use verdict::Verdict;
