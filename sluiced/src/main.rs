@@ -4,6 +4,7 @@ mod attach;
 mod cgroup;
 mod ebpf_loader;
 mod formatter;
+mod proc_cache;
 mod proc_info;
 mod ring_reader;
 
