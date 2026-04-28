@@ -10,6 +10,7 @@ mod ring_reader;
 
 use anyhow::Result;
 
+use crate::proc_cache::ProcInfoCache;
 use crate::ring_reader::EventReader;
 
 #[tokio::main]
@@ -37,11 +38,23 @@ async fn main() -> Result<()> {
     }
 
     let mut reader = EventReader::from_ebpf(&mut bpf)?;
+    let mut cache = ProcInfoCache::with_default_capacity();
     tracing::info!("event reader ready, watching for connections");
 
     tokio::select! {
         result = reader.run(|event| {
-            tracing::info!(target: "sluice::connect", "{}", formatter::format_event(event));
+            let info = cache.lookup_or_fetch(event.tgid);
+            let exe = info
+                .exe
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "?".to_string());
+            tracing::info!(
+                target: "sluice::connect",
+                exe = %exe,
+                "{}",
+                formatter::format_event(event),
+            );
         }) => {
             result?;
         }

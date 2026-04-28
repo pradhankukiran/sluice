@@ -1,7 +1,3 @@
-// `dead_code` is allowed while phase 3 wires up — items go live in the
-// next commit when `sluiced::main` consumes the cache.
-#![allow(dead_code)]
-
 //! Per-process metadata cache.
 //!
 //! Resolving `/proc/<pid>/exe` + `cmdline` for every connection event is a
@@ -85,7 +81,8 @@ impl ProcInfoCache {
         }
     }
 
-    pub fn len(&self) -> usize {
+    #[cfg(test)]
+    fn len(&self) -> usize {
         self.entries.len()
     }
 

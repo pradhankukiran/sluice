@@ -1,7 +1,3 @@
-// `dead_code` is allowed while phase 3 is being built up — items are
-// removed from this list once `read` and the cache are wired into main.
-#![allow(dead_code)]
-
 //! Userspace process metadata sampled from `/proc/<pid>/...`.
 //!
 //! For every connection event the kernel gives us a 16-byte truncated
