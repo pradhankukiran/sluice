@@ -6,6 +6,7 @@ mod cli;
 mod daemon;
 mod ebpf_loader;
 mod formatter;
+mod ipc_server;
 mod kernel_map;
 mod proc_cache;
 mod proc_info;

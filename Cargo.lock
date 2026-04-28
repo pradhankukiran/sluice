@@ -3328,6 +3328,8 @@ dependencies = [
  "aya-log",
  "clap",
  "rusqlite",
+ "serde",
+ "serde_json",
  "sluice-common",
  "thiserror 2.0.18",
  "tokio",
