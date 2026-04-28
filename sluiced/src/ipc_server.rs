@@ -162,14 +162,7 @@ async fn handle_client(
                 }
                 Request::Snapshot => {
                     let snapshot = build_snapshot_response(&handle);
-                    send_frame(
-                        &mut write_half,
-                        &Frame::Response {
-                            id,
-                            body: snapshot,
-                        },
-                    )
-                    .await?;
+                    send_frame(&mut write_half, &Frame::Response { id, body: snapshot }).await?;
                 }
                 Request::SubscribeEvents => {
                     send_frame(
@@ -194,8 +187,7 @@ async fn handle_client(
                     protocol,
                     verdict,
                 } => {
-                    let response =
-                        apply_add_rule(&handle, &exe, &host, &port, &protocol, &verdict);
+                    let response = apply_add_rule(&handle, &exe, &host, &port, &protocol, &verdict);
                     if matches!(response, Response::RuleAdded { .. }) {
                         let _ = events_tx.send(build_rules_changed_event(&handle));
                     }

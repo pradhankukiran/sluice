@@ -9,7 +9,9 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use crate::rules::parse::{parse_exe, parse_host, parse_policy, parse_port, parse_protocol, parse_verdict};
+use crate::rules::parse::{
+    parse_exe, parse_host, parse_policy, parse_port, parse_protocol, parse_verdict,
+};
 use crate::rules::store::{resolve_db_path, SqliteRuleStore};
 use crate::rules::types::{ExeMatch, HostMatch, PortMatch, ProtocolMatch, Rule, Verdict};
 
@@ -226,4 +228,3 @@ fn format_protocol(m: &ProtocolMatch) -> String {
         ProtocolMatch::Udp => "udp".to_string(),
     }
 }
-

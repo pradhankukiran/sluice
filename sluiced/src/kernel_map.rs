@@ -64,11 +64,7 @@ impl KernelVerdictMap {
     /// every running process against the new rule set rather than
     /// inheriting stale verdicts.
     pub fn clear_all(&mut self) -> Result<()> {
-        let keys: Vec<u32> = self
-            .inner
-            .keys()
-            .filter_map(|r| r.ok())
-            .collect();
+        let keys: Vec<u32> = self.inner.keys().filter_map(|r| r.ok()).collect();
         for k in keys {
             // Ignore per-key errors — concurrent kernel evictions can
             // race with our removes, but we'll catch up on the next

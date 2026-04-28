@@ -207,15 +207,10 @@ impl SluiceApp {
             Tab::Rules => self.rules_view(),
             Tab::Policy => self.policy_view(),
         };
-        column![
-            self.header(),
-            self.tab_bar(),
-            self.prompts_view(),
-            tab_view
-        ]
-        .spacing(12)
-        .padding(16)
-        .into()
+        column![self.header(), self.tab_bar(), self.prompts_view(), tab_view]
+            .spacing(12)
+            .padding(16)
+            .into()
     }
 
     fn tab_bar(&self) -> Element<'_, Message> {
