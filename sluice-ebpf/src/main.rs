@@ -2,10 +2,9 @@
 #![no_main]
 
 //! Kernel-side sluice eBPF programs.
-//!
-//! Phase 1 ships only the no_std/no_main scaffolding and a panic handler.
-//! Real probes (`cgroup/connect4`, `cgroup/connect6`, `tc-bpf` egress) land
-//! in subsequent phases.
+
+mod maps;
+mod programs;
 
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
