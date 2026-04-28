@@ -45,7 +45,16 @@ fn usage() -> String {
 fn build_ebpf(extra: &[String]) -> Result<()> {
     let ebpf_dir = workspace_root()?.join("sluice-ebpf");
     let mut cmd = Command::new("cargo");
-    cmd.arg("build")
+    // The outer `cargo run -p xtask` exports `RUSTUP_TOOLCHAIN` and
+    // `CARGO_*` env vars that pin us to the userspace stable toolchain.
+    // The nested cargo invocation needs to re-resolve from the eBPF crate's
+    // own `rust-toolchain.toml` (nightly + rust-src for `-Z build-std`),
+    // so strip those overrides before spawning.
+    cmd.env_remove("RUSTUP_TOOLCHAIN")
+        .env_remove("CARGO")
+        .env_remove("CARGO_MANIFEST_DIR")
+        .env_remove("CARGO_TARGET_DIR")
+        .arg("build")
         .arg("--release")
         .args(extra)
         .current_dir(&ebpf_dir);
