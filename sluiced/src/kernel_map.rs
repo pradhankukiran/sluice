@@ -1,7 +1,3 @@
-// `evaluate_for_pid` and a couple of helpers go live in the daemon hot
-// path commit later this phase.
-#![allow(dead_code)]
-
 //! Userspace handle for the kernel-side `VERDICTS` map plus the
 //! population logic that keeps it in sync with running processes.
 //!
@@ -53,17 +49,6 @@ impl KernelVerdictMap {
         self.inner.insert(pid, verdict.as_u32(), 0)?;
         self.seen.insert(pid);
         Ok(())
-    }
-
-    /// Remove the verdict for `pid` (e.g. after a process exits or a rule
-    /// reload reverts a previous decision). `Ok(())` even if the entry
-    /// was already absent.
-    pub fn clear(&mut self, pid: u32) -> Result<()> {
-        match self.inner.remove(&pid) {
-            Ok(()) => Ok(()),
-            Err(aya::maps::MapError::KeyNotFound) => Ok(()),
-            Err(other) => Err(other.into()),
-        }
     }
 
     /// Whether we've already evaluated rules for `pid`. The daemon hot

@@ -10,6 +10,7 @@ use crate::attach;
 use crate::cgroup;
 use crate::ebpf_loader;
 use crate::formatter;
+use crate::kernel_map::KernelVerdictMap;
 use crate::proc_cache::ProcInfoCache;
 use crate::ring_reader::EventReader;
 use crate::rules::matcher;
@@ -56,6 +57,14 @@ async fn run_async() -> Result<()> {
     let mut bpf = ebpf_loader::load()?;
     tracing::info!("eBPF object loaded");
 
+    let mut kernel_map = KernelVerdictMap::from_ebpf(&mut bpf)?;
+    let (touched, pushed) = kernel_map.populate_from_proc(&rules)?;
+    tracing::info!(
+        pids_seen = touched,
+        verdicts_pushed = pushed,
+        "kernel verdict map populated from /proc"
+    );
+
     let programs = attach::attach_connect_programs(&mut bpf, &cgroup_root)?;
     for name in &programs {
         tracing::info!(program = name, "attached to cgroup");
@@ -68,6 +77,21 @@ async fn run_async() -> Result<()> {
     tokio::select! {
         result = reader.run(|event| {
             let info = cache.lookup_or_fetch(event.tgid);
+
+            // Lazy population: a process that started after our `/proc`
+            // walk hits this path on its first outbound connect. We push
+            // its verdict so subsequent connects from the same PID
+            // short-circuit in the kernel.
+            if !kernel_map.has_seen(event.tgid) {
+                if let Err(err) = kernel_map.evaluate_and_push(event.tgid, &rules) {
+                    tracing::warn!(
+                        pid = event.tgid,
+                        error = %err,
+                        "failed to push lazy verdict to kernel map"
+                    );
+                }
+            }
+
             let verdict = matcher::evaluate(&rules, event, info).unwrap_or(fallback_verdict);
             tracing::info!(
                 target: "sluice::connect",
