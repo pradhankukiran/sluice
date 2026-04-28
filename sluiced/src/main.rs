@@ -1,5 +1,6 @@
 //! `sluiced` — the privileged sluice daemon.
 
+mod attach;
 mod cgroup;
 mod ebpf_loader;
 
@@ -20,8 +21,15 @@ fn main() -> Result<()> {
 
     let bytecode_path = ebpf_loader::bytecode_path();
     tracing::info!(path = %bytecode_path.display(), "eBPF bytecode path");
-    let _bpf = ebpf_loader::load()?;
+    let mut bpf = ebpf_loader::load()?;
     tracing::info!("eBPF object loaded");
 
+    let programs = attach::attach_connect_programs(&mut bpf, &cgroup_root)?;
+    for name in &programs {
+        tracing::info!(program = name, "attached to cgroup");
+    }
+
+    // Keep `bpf` alive — dropping it would close the program fds and detach.
+    let _hold_open = bpf;
     Ok(())
 }
