@@ -220,7 +220,9 @@ impl SluiceApp {
 
     fn absorb_event(&mut self, event: Event) {
         match &event {
-            Event::Connection { pid, exe, verdict, .. } => {
+            Event::Connection {
+                pid, exe, verdict, ..
+            } => {
                 self.total_events += 1;
                 if verdict == "deny" {
                     self.deny_count += 1;
@@ -356,22 +358,21 @@ impl SluiceApp {
             ConnectionStatus::NotConnected => "not connected".to_string(),
         };
 
-        let metric =
-            |label: &'static str, value: String| -> Element<'_, Message> {
-                column![
-                    text(label)
-                        .size(style::SIZE_XS)
-                        .color(style::STATUSBAR_TEXT)
-                        .font(style::SEMI),
-                    text(value)
-                        .size(style::SIZE_LG)
-                        .color(style::STATUSBAR_TEXT_BRIGHT)
-                        .font(style::MONO_BOLD),
-                ]
-                .spacing(0)
-                .align_x(Alignment::Start)
-                .into()
-            };
+        let metric = |label: &'static str, value: String| -> Element<'_, Message> {
+            column![
+                text(label)
+                    .size(style::SIZE_XS)
+                    .color(style::STATUSBAR_TEXT)
+                    .font(style::SEMI),
+                text(value)
+                    .size(style::SIZE_LG)
+                    .color(style::STATUSBAR_TEXT_BRIGHT)
+                    .font(style::MONO_BOLD),
+            ]
+            .spacing(0)
+            .align_x(Alignment::Start)
+            .into()
+        };
 
         let stats = row![
             metric("EVENTS", self.total_events.to_string()),
@@ -431,9 +432,11 @@ impl SluiceApp {
             };
             let content = row![
                 icon(ic, 20.0, icon_color),
-                text(label)
-                    .size(style::SIZE_MD)
-                    .font(if active { style::BOLD } else { style::SEMI }),
+                text(label).size(style::SIZE_MD).font(if active {
+                    style::BOLD
+                } else {
+                    style::SEMI
+                }),
                 Space::with_width(Length::Fill),
                 count_label,
             ]
@@ -466,10 +469,13 @@ impl SluiceApp {
         } else {
             let n = self.pending_prompts.len();
             let header = container(
-                text(format!("{n} PENDING PROMPT{}", if n == 1 { "" } else { "S" }))
-                    .size(style::SIZE_XS)
-                    .color(style::TEXT_MUTED)
-                    .font(style::BOLD),
+                text(format!(
+                    "{n} PENDING PROMPT{}",
+                    if n == 1 { "" } else { "S" }
+                ))
+                .size(style::SIZE_XS)
+                .color(style::TEXT_MUTED)
+                .font(style::BOLD),
             )
             .padding([10, 18]);
             let rows: Vec<Element<'_, Message>> = self
@@ -505,18 +511,11 @@ impl SluiceApp {
             column![header, column(rows).spacing(6)].spacing(0).into()
         };
 
-        container(
-            column![
-                nav,
-                Space::with_height(Length::Fill),
-                prompts_section,
-            ]
-            .spacing(0),
-        )
-        .width(Length::Fixed(260.0))
-        .height(Length::Fill)
-        .style(style::sidebar)
-        .into()
+        container(column![nav, Space::with_height(Length::Fill), prompts_section,].spacing(0))
+            .width(Length::Fixed(260.0))
+            .height(Length::Fill)
+            .style(style::sidebar)
+            .into()
     }
 
     fn footer(&self) -> Element<'_, Message> {
@@ -565,11 +564,8 @@ impl SluiceApp {
                 "Open a browser tab or run `curl example.com` to populate the feed.",
             )
         } else {
-            let rows: Vec<Element<'_, Message>> = self
-                .events
-                .iter()
-                .filter_map(event_row)
-                .collect();
+            let rows: Vec<Element<'_, Message>> =
+                self.events.iter().filter_map(event_row).collect();
             scrollable(column(rows).spacing(0))
                 .height(Length::Fill)
                 .into()
@@ -590,7 +586,9 @@ impl SluiceApp {
             )
         } else {
             let rows: Vec<Element<'_, Message>> = self.rules.iter().map(rule_row).collect();
-            scrollable(column(rows).spacing(0)).height(Length::Fill).into()
+            scrollable(column(rows).spacing(0))
+                .height(Length::Fill)
+                .into()
         };
         let table = container(column![header, body].spacing(0))
             .width(Length::Fill)
@@ -608,11 +606,36 @@ impl SluiceApp {
             .font(style::BOLD);
         let body = column![
             title,
-            form_field("Executable", "any | /usr/bin/...", &self.form.exe, FormField::Exe),
-            form_field("Host", "any | 1.2.3.4 | example.com", &self.form.host, FormField::Host),
-            form_field("Port", "any | 443 | 8000-8100", &self.form.port, FormField::Port),
-            form_field("Protocol", "any | tcp | udp", &self.form.protocol, FormField::Protocol),
-            form_field("Verdict", "allow | deny", &self.form.verdict, FormField::Verdict),
+            form_field(
+                "Executable",
+                "any | /usr/bin/...",
+                &self.form.exe,
+                FormField::Exe
+            ),
+            form_field(
+                "Host",
+                "any | 1.2.3.4 | example.com",
+                &self.form.host,
+                FormField::Host
+            ),
+            form_field(
+                "Port",
+                "any | 443 | 8000-8100",
+                &self.form.port,
+                FormField::Port
+            ),
+            form_field(
+                "Protocol",
+                "any | tcp | udp",
+                &self.form.protocol,
+                FormField::Protocol
+            ),
+            form_field(
+                "Verdict",
+                "allow | deny",
+                &self.form.verdict,
+                FormField::Verdict
+            ),
             primary_button("Add rule", Message::AddRuleClicked),
         ]
         .spacing(14);
@@ -649,9 +672,16 @@ impl SluiceApp {
             .size(style::SIZE_MD)
             .color(style::TEXT_MUTED);
 
-        let opt = |label: &'static str, value: &'static str, body: &'static str| -> Element<'_, Message> {
+        let opt = |label: &'static str,
+                   value: &'static str,
+                   body: &'static str|
+         -> Element<'_, Message> {
             let active = current == value;
-            let dot_color = if active { style::PRIMARY } else { style::BORDER_STRONG };
+            let dot_color = if active {
+                style::PRIMARY
+            } else {
+                style::BORDER_STRONG
+            };
             let dot = container(Space::with_width(Length::Fixed(16.0)))
                 .height(Length::Fixed(16.0))
                 .style(move |_| iced::widget::container::Style {
@@ -674,13 +704,10 @@ impl SluiceApp {
             let body_text = text(body).size(style::SIZE_SM).color(style::TEXT_MUTED);
 
             button(
-                row![
-                    dot,
-                    column![label_text, body_text].spacing(4),
-                ]
-                .spacing(16)
-                .align_y(Alignment::Center)
-                .padding([12, 8]),
+                row![dot, column![label_text, body_text].spacing(4),]
+                    .spacing(16)
+                    .align_y(Alignment::Center)
+                    .padding([12, 8]),
             )
             .on_press(Message::SetPolicy(value.to_string()))
             .width(Length::Fill)
@@ -691,7 +718,11 @@ impl SluiceApp {
         let options = column![
             opt("Allow", "allow", "Pass everything through. Logs only."),
             opt("Deny", "deny", "Block everything not explicitly allowed."),
-            opt("Ask", "ask", "Prompt for unrecognised processes (mode B: first connect slips through)."),
+            opt(
+                "Ask",
+                "ask",
+                "Prompt for unrecognised processes (mode B: first connect slips through)."
+            ),
         ]
         .spacing(6);
 
@@ -724,7 +755,9 @@ impl SluiceApp {
                 .iter()
                 .map(|r| rate_row(r, self.throughput.get(&r.pid).copied().unwrap_or(0)))
                 .collect();
-            scrollable(column(rows).spacing(0)).height(Length::Fill).into()
+            scrollable(column(rows).spacing(0))
+                .height(Length::Fill)
+                .into()
         };
 
         let table = container(column![header, body].spacing(0))
@@ -796,16 +829,17 @@ impl SluiceApp {
                         Space::with_width(Length::Fill),
                         text(bps_label)
                             .size(style::SIZE_SM)
-                            .color(if bps > 0 { style::PRIMARY } else { style::TEXT_MUTED })
+                            .color(if bps > 0 {
+                                style::PRIMARY
+                            } else {
+                                style::TEXT_MUTED
+                            })
                             .font(style::MONO_BOLD),
                     ]
                     .align_y(Alignment::Center)
                     .spacing(6),
                 )
-                .on_press(Message::RateFieldChanged(
-                    RateField::Pid,
-                    r.pid.to_string(),
-                ))
+                .on_press(Message::RateFieldChanged(RateField::Pid, r.pid.to_string()))
                 .width(Length::Fill)
                 .padding([10, 14])
                 .style(style::picker_button)
