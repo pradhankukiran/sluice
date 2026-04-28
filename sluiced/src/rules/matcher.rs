@@ -7,13 +7,23 @@ use std::path::Path;
 
 use sluice_common::event::{ConnectEvent, FAMILY_INET, FAMILY_INET6, PROTO_TCP, PROTO_UDP};
 
+use crate::dns_cache::DnsCache;
 use crate::proc_info::ProcInfo;
 use crate::rules::types::{ExeMatch, HostMatch, PortMatch, ProtocolMatch, Rule, Verdict};
 
 /// True if every axis of `rule` matches the event/process pair.
-pub fn matches(rule: &Rule, event: &ConnectEvent, info: &ProcInfo) -> bool {
+///
+/// `dns` may be `None` when the caller has no DNS cache available
+/// (e.g. unit tests, the kernel-map evaluator); hostname rules then
+/// silently fail to match.
+pub fn matches(
+    rule: &Rule,
+    event: &ConnectEvent,
+    info: &ProcInfo,
+    dns: Option<&DnsCache>,
+) -> bool {
     matches_exe(&rule.exe_match, info)
-        && matches_host(&rule.host, event)
+        && matches_host(&rule.host, event, dns)
         && matches_port(&rule.port, event)
         && matches_protocol(&rule.protocol, event)
 }
@@ -21,10 +31,15 @@ pub fn matches(rule: &Rule, event: &ConnectEvent, info: &ProcInfo) -> bool {
 /// Linear scan over `rules` returning the first matching rule's verdict.
 /// `None` means no rule applied — the caller falls back to the default
 /// policy.
-pub fn evaluate(rules: &[Rule], event: &ConnectEvent, info: &ProcInfo) -> Option<Verdict> {
+pub fn evaluate(
+    rules: &[Rule],
+    event: &ConnectEvent,
+    info: &ProcInfo,
+    dns: Option<&DnsCache>,
+) -> Option<Verdict> {
     rules
         .iter()
-        .find(|r| matches(r, event, info))
+        .find(|r| matches(r, event, info, dns))
         .map(|r| r.verdict)
 }
 
@@ -58,7 +73,7 @@ fn matches_exe(m: &ExeMatch, info: &ProcInfo) -> bool {
     }
 }
 
-fn matches_host(m: &HostMatch, event: &ConnectEvent) -> bool {
+fn matches_host(m: &HostMatch, event: &ConnectEvent, dns: Option<&DnsCache>) -> bool {
     let Some(event_ip) = extract_ip(event) else {
         return false;
     };
@@ -69,8 +84,13 @@ fn matches_host(m: &HostMatch, event: &ConnectEvent) -> bool {
             network,
             prefix_len,
         } => ip_in_cidr(event_ip, *network, *prefix_len),
-        // Hostname matching requires DNS reverse-resolution; phase 9.
-        HostMatch::Hostname(_) => false,
+        // Hostname matching: consult the forward-lookup cache. Stale or
+        // missing cache entries fail to match — the daemon refreshes
+        // the cache at startup and on rule mutation.
+        HostMatch::Hostname(name) => match dns {
+            Some(cache) => cache.contains(name, event_ip),
+            None => false,
+        },
     }
 }
 
@@ -247,16 +267,16 @@ mod tests {
     #[test]
     fn host_any_matches_any_event() {
         let event = ipv4_event(1, 2, 3, 4, 80);
-        assert!(matches_host(&HostMatch::Any, &event));
+        assert!(matches_host(&HostMatch::Any, &event, None));
     }
 
     #[test]
     fn host_ip_matches_exact_v4() {
         let event = ipv4_event(140, 82, 121, 4, 443);
         let m = HostMatch::Ip(IpAddr::from_str("140.82.121.4").unwrap());
-        assert!(matches_host(&m, &event));
+        assert!(matches_host(&m, &event, None));
         let other = HostMatch::Ip(IpAddr::from_str("1.1.1.1").unwrap());
-        assert!(!matches_host(&other, &event));
+        assert!(!matches_host(&other, &event, None));
     }
 
     #[test]
@@ -267,7 +287,7 @@ mod tests {
         addr[15] = 0x01;
         let event = ipv6_event(addr, 443);
         let m = HostMatch::Ip(IpAddr::from_str("2001::1").unwrap());
-        assert!(matches_host(&m, &event));
+        assert!(matches_host(&m, &event, None));
     }
 
     #[test]
@@ -277,7 +297,7 @@ mod tests {
             network: IpAddr::from_str("10.0.0.0").unwrap(),
             prefix_len: 8,
         };
-        assert!(matches_host(&m, &event));
+        assert!(matches_host(&m, &event, None));
     }
 
     #[test]
@@ -287,7 +307,7 @@ mod tests {
             network: IpAddr::from_str("10.0.0.0").unwrap(),
             prefix_len: 8,
         };
-        assert!(!matches_host(&m, &event));
+        assert!(!matches_host(&m, &event, None));
     }
 
     #[test]
@@ -297,7 +317,7 @@ mod tests {
             network: IpAddr::from_str("0.0.0.0").unwrap(),
             prefix_len: 0,
         };
-        assert!(matches_host(&m, &event));
+        assert!(matches_host(&m, &event, None));
     }
 
     #[test]
@@ -307,9 +327,9 @@ mod tests {
             network: IpAddr::from_str("1.1.1.1").unwrap(),
             prefix_len: 32,
         };
-        assert!(matches_host(&m, &event));
+        assert!(matches_host(&m, &event, None));
         let other_event = ipv4_event(1, 1, 1, 2, 53);
-        assert!(!matches_host(&m, &other_event));
+        assert!(!matches_host(&m, &other_event, None));
     }
 
     #[test]
@@ -321,14 +341,48 @@ mod tests {
             network: IpAddr::from_str("10.0.0.0").unwrap(),
             prefix_len: 8,
         };
-        assert!(!matches_host(&m, &event));
+        assert!(!matches_host(&m, &event, None));
     }
 
     #[test]
-    fn host_hostname_never_matches_in_phase_4() {
+    fn host_hostname_misses_without_cache() {
         let event = ipv4_event(1, 2, 3, 4, 80);
         let m = HostMatch::Hostname("example.com".to_string());
-        assert!(!matches_host(&m, &event));
+        assert!(!matches_host(&m, &event, None));
+    }
+
+    #[test]
+    fn host_hostname_matches_when_cache_contains_addr() {
+        use crate::dns_cache::DnsCache;
+        use std::time::Duration;
+
+        let event = ipv4_event(140, 82, 121, 4, 443);
+        let m = HostMatch::Hostname("github.com".to_string());
+
+        let mut cache = DnsCache::new();
+        cache.insert(
+            "github.com",
+            vec![IpAddr::from_str("140.82.121.4").unwrap()],
+            Duration::from_secs(60),
+        );
+        assert!(matches_host(&m, &event, Some(&cache)));
+    }
+
+    #[test]
+    fn host_hostname_misses_when_cache_lacks_addr() {
+        use crate::dns_cache::DnsCache;
+        use std::time::Duration;
+
+        let event = ipv4_event(8, 8, 8, 8, 53);
+        let m = HostMatch::Hostname("github.com".to_string());
+
+        let mut cache = DnsCache::new();
+        cache.insert(
+            "github.com",
+            vec![IpAddr::from_str("140.82.121.4").unwrap()],
+            Duration::from_secs(60),
+        );
+        assert!(!matches_host(&m, &event, Some(&cache)));
     }
 
     // ---- port matcher -------------------------------------------------
@@ -386,7 +440,7 @@ mod tests {
         );
 
         let rules = vec![deny_github, allow_any()];
-        assert_eq!(evaluate(&rules, &event, &info), Some(Verdict::Deny));
+        assert_eq!(evaluate(&rules, &event, &info, None), Some(Verdict::Deny));
     }
 
     #[test]
@@ -450,6 +504,6 @@ mod tests {
             ProtocolMatch::Any,
             Verdict::Allow,
         );
-        assert_eq!(evaluate(&[strict], &event, &info), None);
+        assert_eq!(evaluate(&[strict], &event, &info, None), None);
     }
 }

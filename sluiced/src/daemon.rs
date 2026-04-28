@@ -139,7 +139,7 @@ async fn run_async() -> Result<()> {
                 }
             }
 
-            let rule_verdict = matcher::evaluate(&rules_guard, event, info);
+            let rule_verdict = matcher::evaluate(&rules_guard, event, info, None);
 
             // Under Ask, an unmatched event triggers a one-shot prompt
             // (deduped per PID) and resolves to "allow" for *this*
