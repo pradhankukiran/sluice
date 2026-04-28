@@ -74,7 +74,11 @@ async fn session(socket_path: &Path, output: &mpsc::Sender<ClientMessage>) -> Re
         Response::Error { message } => {
             return Err(anyhow!("server rejected Hello: {message}"));
         }
-        other => return Err(anyhow!("unexpected response to Hello: {other:?}")),
+        Response::Snapshot { .. }
+        | Response::Subscribed
+        | Response::VerdictApplied { .. } => {
+            return Err(anyhow!("unexpected response to Hello: {hello:?}"));
+        }
     };
     send_message(output, ClientMessage::Connected { server_version }).await;
 
@@ -89,7 +93,9 @@ async fn session(socket_path: &Path, output: &mpsc::Sender<ClientMessage>) -> Re
         Response::Error { message } => {
             return Err(anyhow!("server rejected Snapshot: {message}"));
         }
-        other => return Err(anyhow!("unexpected response to Snapshot: {other:?}")),
+        Response::Hello { .. } | Response::Subscribed | Response::VerdictApplied { .. } => {
+            return Err(anyhow!("unexpected response to Snapshot: {snapshot:?}"));
+        }
     };
     send_message(
         output,
@@ -108,7 +114,11 @@ async fn session(socket_path: &Path, output: &mpsc::Sender<ClientMessage>) -> Re
         Response::Error { message } => {
             return Err(anyhow!("server rejected SubscribeEvents: {message}"));
         }
-        other => return Err(anyhow!("unexpected response to SubscribeEvents: {other:?}")),
+        Response::Hello { .. } | Response::Snapshot { .. } | Response::VerdictApplied { .. } => {
+            return Err(anyhow!(
+                "unexpected response to SubscribeEvents: {subscribed:?}"
+            ));
+        }
     }
 
     while let Some(line) = reader.next_line().await? {

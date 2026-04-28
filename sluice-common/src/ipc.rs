@@ -56,6 +56,13 @@ pub enum Request {
     /// the daemon. The server replies with `Response::Subscribed` and
     /// thereafter pushes events asynchronously on the same socket.
     SubscribeEvents,
+    /// Set the kernel-side verdict for `pid` in response to a prompt.
+    /// Verdict applies starting with the *next* connect from that PID.
+    SetVerdict {
+        pid: u32,
+        /// Either `"allow"` or `"deny"`.
+        verdict: String,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -69,6 +76,10 @@ pub enum Response {
         default_policy: String,
     },
     Subscribed,
+    VerdictApplied {
+        pid: u32,
+        verdict: String,
+    },
     Error {
         message: String,
     },
@@ -88,6 +99,19 @@ pub enum Event {
         addr: String,
         dport: u16,
         verdict: String,
+    },
+    /// Daemon is asking the GUI to decide what to do with `pid`. Sent
+    /// once per PID under `default_policy=ask`; the GUI replies with
+    /// `Request::SetVerdict`. Subsequent connections from the same PID
+    /// short-circuit in the kernel once a verdict is recorded.
+    Prompt {
+        pid: u32,
+        exe: Option<String>,
+        cmdline: Vec<String>,
+        family: String,
+        protocol: String,
+        addr: String,
+        dport: u16,
     },
 }
 
@@ -128,6 +152,38 @@ mod tests {
         );
         unsafe { std::env::remove_var(SOCKET_ENV) };
         assert_eq!(resolve_socket_path(), PathBuf::from(DEFAULT_SOCKET_PATH));
+    }
+
+    #[test]
+    fn set_verdict_request_roundtrips() {
+        let f = Frame::Request {
+            id: 42,
+            body: Request::SetVerdict {
+                pid: 1234,
+                verdict: "deny".to_string(),
+            },
+        };
+        let s = serde_json::to_string(&f).unwrap();
+        let back: Frame = serde_json::from_str(&s).unwrap();
+        assert_eq!(f, back);
+    }
+
+    #[test]
+    fn prompt_event_uses_snake_case_tag() {
+        let e = Event::Prompt {
+            pid: 1234,
+            exe: Some("/usr/bin/curl".to_string()),
+            cmdline: vec!["curl".to_string(), "https://x".to_string()],
+            family: "ipv4".to_string(),
+            protocol: "tcp".to_string(),
+            addr: "1.2.3.4".to_string(),
+            dport: 443,
+        };
+        let s = serde_json::to_string(&e).unwrap();
+        assert!(
+            s.contains(r#""kind":"prompt""#),
+            "kind tag should be snake_case: {s}"
+        );
     }
 
     #[test]

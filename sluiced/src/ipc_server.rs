@@ -144,6 +144,21 @@ async fn handle_client(
                     let rx = events_tx.subscribe();
                     return stream_events(reader, write_half, rx).await;
                 }
+                // Real handler arrives in the next commit.
+                Request::SetVerdict { .. } => {
+                    send_frame(
+                        &mut write_half,
+                        &Frame::Response {
+                            id,
+                            body: Response::Error {
+                                message:
+                                    "set_verdict not handled outside the streaming session yet"
+                                        .to_string(),
+                            },
+                        },
+                    )
+                    .await?;
+                }
             },
             // Servers shouldn't see Response/Event frames; reject loudly
             // so the client realises it has the protocol backwards.

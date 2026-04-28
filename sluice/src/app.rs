@@ -127,28 +127,33 @@ impl SluiceApp {
 }
 
 fn event_row(evt: &Event) -> Element<'_, Message> {
-    let Event::Connection {
-        pid,
-        exe,
-        family,
-        protocol,
-        addr,
-        dport,
-        verdict,
-        ..
-    } = evt;
-
-    let label = exe.clone().unwrap_or_else(|| "(no exe)".to_string());
-    let dst = if family == "ipv6" {
-        format!("[{addr}]:{dport}")
-    } else {
-        format!("{addr}:{dport}")
+    let line = match evt {
+        Event::Connection {
+            pid,
+            exe,
+            family,
+            protocol,
+            addr,
+            dport,
+            verdict,
+            ..
+        } => {
+            let label = exe.clone().unwrap_or_else(|| "(no exe)".to_string());
+            let dst = if family == "ipv6" {
+                format!("[{addr}]:{dport}")
+            } else {
+                format!("{addr}:{dport}")
+            };
+            format!("{verdict:>5} {label} pid={pid} -> {dst} ({protocol})")
+        }
+        // Prompts get their own panel; if one slips into the events
+        // list (shouldn't happen) render a placeholder rather than
+        // panicking.
+        Event::Prompt { pid, exe, .. } => {
+            let label = exe.clone().unwrap_or_else(|| "(no exe)".to_string());
+            format!("prompt pid={pid} {label}")
+        }
     };
-
-    let line = format!(
-        "{verdict:>5} {label} pid={pid} -> {dst} ({proto})",
-        proto = protocol,
-    );
     container(text(line).size(13))
         .padding([2, 0])
         .width(Length::Fill)
