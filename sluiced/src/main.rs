@@ -1,8 +1,6 @@
 //! `sluiced` — the privileged sluice daemon.
-//!
-//! Phase 1 only ships the binary skeleton: it initializes logging and exits.
-//! Subsequent phases will load eBPF programs, manage the rules database,
-//! and serve the GUI over a Unix socket.
+
+mod cgroup;
 
 use anyhow::Result;
 
@@ -15,6 +13,9 @@ fn main() -> Result<()> {
         .init();
 
     tracing::info!("sluiced {} starting up", env!("CARGO_PKG_VERSION"));
-    tracing::info!("phase 1 skeleton — no eBPF programs attached yet");
+
+    let cgroup_root = cgroup::resolve()?;
+    tracing::info!(path = %cgroup_root.display(), "cgroup v2 root resolved");
+
     Ok(())
 }
