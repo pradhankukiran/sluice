@@ -105,6 +105,8 @@ impl SluiceApp {
                     });
                 }
             }
+            // Phase 8 task 72 wires rules + policy refresh in.
+            Event::RulesChanged { .. } => {}
         }
         if self.events.len() == MAX_EVENTS {
             self.events.pop_back();
@@ -241,6 +243,9 @@ fn event_row(evt: &Event) -> Element<'_, Message> {
         Event::Prompt { pid, exe, .. } => {
             let label = exe.clone().unwrap_or_else(|| "(no exe)".to_string());
             format!("prompt pid={pid} {label}")
+        }
+        Event::RulesChanged { rules, .. } => {
+            format!("rules changed (now {})", rules.len())
         }
     };
     container(text(line).size(13))

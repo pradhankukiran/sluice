@@ -63,6 +63,24 @@ pub enum Request {
         /// Either `"allow"` or `"deny"`.
         verdict: String,
     },
+    /// Insert a new rule. Field strings use the same syntax as the CLI:
+    /// `exe`: `any | <abs path>`; `host`: `any | <ip> | <ip>/<prefix> | <hostname>`;
+    /// `port`: `any | N | N-M`; `protocol`: `any | tcp | udp`;
+    /// `verdict`: `allow | deny`.
+    AddRule {
+        exe: String,
+        host: String,
+        port: String,
+        protocol: String,
+        verdict: String,
+    },
+    /// Delete a rule by id.
+    DeleteRule { id: i64 },
+    /// Set the default policy.
+    SetPolicy {
+        /// `allow | deny | ask`.
+        policy: String,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -79,6 +97,15 @@ pub enum Response {
     VerdictApplied {
         pid: u32,
         verdict: String,
+    },
+    RuleAdded {
+        id: i64,
+    },
+    RuleDeleted {
+        id: i64,
+    },
+    PolicyUpdated {
+        policy: String,
     },
     Error {
         message: String,
@@ -112,6 +139,14 @@ pub enum Event {
         protocol: String,
         addr: String,
         dport: u16,
+    },
+    /// Pushed to all subscribers when rules or the default policy
+    /// change (via the CLI on a separate `sluiced` invocation, or via
+    /// AddRule/DeleteRule/SetPolicy). Carries the full new snapshot so
+    /// clients can refresh without a separate `Snapshot` request.
+    RulesChanged {
+        rules: Vec<RuleSummary>,
+        default_policy: String,
     },
 }
 
@@ -166,6 +201,36 @@ mod tests {
         let s = serde_json::to_string(&f).unwrap();
         let back: Frame = serde_json::from_str(&s).unwrap();
         assert_eq!(f, back);
+    }
+
+    #[test]
+    fn add_rule_request_roundtrips() {
+        let f = Frame::Request {
+            id: 11,
+            body: Request::AddRule {
+                exe: "/usr/bin/curl".to_string(),
+                host: "any".to_string(),
+                port: "443".to_string(),
+                protocol: "tcp".to_string(),
+                verdict: "deny".to_string(),
+            },
+        };
+        let s = serde_json::to_string(&f).unwrap();
+        let back: Frame = serde_json::from_str(&s).unwrap();
+        assert_eq!(f, back);
+    }
+
+    #[test]
+    fn rules_changed_event_uses_snake_case_tag() {
+        let e = Event::RulesChanged {
+            rules: vec![],
+            default_policy: "deny".to_string(),
+        };
+        let s = serde_json::to_string(&e).unwrap();
+        assert!(
+            s.contains(r#""kind":"rules_changed""#),
+            "kind tag should be snake_case: {s}"
+        );
     }
 
     #[test]

@@ -86,7 +86,12 @@ async fn session(
         Response::Error { message } => {
             return Err(anyhow!("server rejected Hello: {message}"));
         }
-        Response::Snapshot { .. } | Response::Subscribed | Response::VerdictApplied { .. } => {
+        Response::Snapshot { .. }
+        | Response::Subscribed
+        | Response::VerdictApplied { .. }
+        | Response::RuleAdded { .. }
+        | Response::RuleDeleted { .. }
+        | Response::PolicyUpdated { .. } => {
             return Err(anyhow!("unexpected response to Hello: {hello:?}"));
         }
     };
@@ -103,7 +108,12 @@ async fn session(
         Response::Error { message } => {
             return Err(anyhow!("server rejected Snapshot: {message}"));
         }
-        Response::Hello { .. } | Response::Subscribed | Response::VerdictApplied { .. } => {
+        Response::Hello { .. }
+        | Response::Subscribed
+        | Response::VerdictApplied { .. }
+        | Response::RuleAdded { .. }
+        | Response::RuleDeleted { .. }
+        | Response::PolicyUpdated { .. } => {
             return Err(anyhow!("unexpected response to Snapshot: {snapshot:?}"));
         }
     };
@@ -124,7 +134,12 @@ async fn session(
         Response::Error { message } => {
             return Err(anyhow!("server rejected SubscribeEvents: {message}"));
         }
-        Response::Hello { .. } | Response::Snapshot { .. } | Response::VerdictApplied { .. } => {
+        Response::Hello { .. }
+        | Response::Snapshot { .. }
+        | Response::VerdictApplied { .. }
+        | Response::RuleAdded { .. }
+        | Response::RuleDeleted { .. }
+        | Response::PolicyUpdated { .. } => {
             return Err(anyhow!(
                 "unexpected response to SubscribeEvents: {subscribed:?}"
             ));

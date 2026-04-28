@@ -161,6 +161,19 @@ async fn handle_client(
                     let response = apply_verdict(&handle, pid, &verdict);
                     send_frame(&mut write_half, &Frame::Response { id, body: response }).await?;
                 }
+                Request::AddRule { .. } | Request::DeleteRule { .. } | Request::SetPolicy { .. } => {
+                    // Real handlers arrive in the task 67 commit.
+                    send_frame(
+                        &mut write_half,
+                        &Frame::Response {
+                            id,
+                            body: Response::Error {
+                                message: "rule mutation handlers not yet implemented".to_string(),
+                            },
+                        },
+                    )
+                    .await?;
+                }
             },
             // Servers shouldn't see Response/Event frames; reject loudly
             // so the client realises it has the protocol backwards.
