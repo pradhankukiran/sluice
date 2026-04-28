@@ -59,6 +59,13 @@ fn parse_start_time(raw: &str) -> Option<u64> {
     starttime.parse().ok()
 }
 
+/// Resolve `/proc/<pid>/exe` (a symlink to the executable). Returns `None`
+/// for kernel threads, exited processes, or processes the daemon can't
+/// inspect (different user without `CAP_SYS_PTRACE`).
+pub fn read_exe(pid: u32) -> Option<PathBuf> {
+    fs::read_link(format!("/proc/{pid}/exe")).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -93,5 +100,27 @@ mod tests {
     fn rejects_malformed_input() {
         assert_eq!(parse_start_time(""), None);
         assert_eq!(parse_start_time("no parens here"), None);
+    }
+
+    #[test]
+    fn read_exe_resolves_current_process() {
+        // The test binary itself must be readable via /proc/self/exe.
+        let exe = read_exe(std::process::id()).expect("test binary exe");
+        let canonical = std::fs::canonicalize(&exe).expect("canonicalize exe");
+        assert!(canonical.is_absolute());
+        assert!(
+            canonical
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(|name| name.contains("sluiced"))
+                .unwrap_or(false),
+            "expected sluiced test binary, got {canonical:?}"
+        );
+    }
+
+    #[test]
+    fn read_exe_returns_none_for_invalid_pid() {
+        // PID 0 is reserved by the kernel and never a real process.
+        assert_eq!(read_exe(0), None);
     }
 }
