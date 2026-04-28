@@ -17,7 +17,13 @@ use anyhow::{anyhow, Context, Result};
 use rusqlite::{params, Connection, Row};
 
 use crate::rules::schema::apply_migrations;
-use crate::rules::types::{ExeMatch, HostMatch, PortMatch, ProtocolMatch, Rule, Verdict};
+use crate::rules::types::{ExeMatch, HostMatch, Policy, PortMatch, ProtocolMatch, Rule, Verdict};
+
+/// Phase 4 default when the `default_policy` setting is unset. Allows
+/// connections so the daemon remains a passive observer; the operator
+/// can switch to `Deny` or (post-phase-7) `Ask` via `policy set`.
+const DEFAULT_POLICY: Policy = Policy::Allow;
+const SETTING_DEFAULT_POLICY: &str = "default_policy";
 
 pub struct SqliteRuleStore {
     conn: Connection,
@@ -85,6 +91,38 @@ impl SqliteRuleStore {
             .conn
             .execute("DELETE FROM rules WHERE id = ?1", params![id])?;
         Ok(n > 0)
+    }
+
+    /// Read the configured default policy. Returns [`DEFAULT_POLICY`]
+    /// when the setting is absent or contains an unrecognized value.
+    pub fn default_policy(&self) -> Result<Policy> {
+        let raw: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = ?1",
+                params![SETTING_DEFAULT_POLICY],
+                |row| row.get(0),
+            )
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                other => Err(other),
+            })
+            .map(Some)?
+            .flatten();
+
+        Ok(raw
+            .as_deref()
+            .and_then(Policy::from_str_strict)
+            .unwrap_or(DEFAULT_POLICY))
+    }
+
+    pub fn set_default_policy(&self, policy: Policy) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![SETTING_DEFAULT_POLICY, policy.as_str()],
+        )?;
+        Ok(())
     }
 }
 
@@ -285,6 +323,22 @@ mod tests {
         let mut r = sample_rule();
         r.verdict = Verdict::Unknown;
         assert!(store.insert(&r).is_err());
+    }
+
+    #[test]
+    fn default_policy_starts_at_allow() {
+        let store = SqliteRuleStore::open_in_memory().unwrap();
+        assert_eq!(store.default_policy().unwrap(), Policy::Allow);
+    }
+
+    #[test]
+    fn default_policy_persists() {
+        let store = SqliteRuleStore::open_in_memory().unwrap();
+        store.set_default_policy(Policy::Deny).unwrap();
+        assert_eq!(store.default_policy().unwrap(), Policy::Deny);
+
+        store.set_default_policy(Policy::Ask).unwrap();
+        assert_eq!(store.default_policy().unwrap(), Policy::Ask);
     }
 
     #[test]

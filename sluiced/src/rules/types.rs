@@ -61,3 +61,34 @@ pub enum ProtocolMatch {
     Tcp,
     Udp,
 }
+
+/// Policy applied when no rule matches a connection.
+///
+/// `Ask` requires the GUI prompt path that arrives in phase 7; in phase 4
+/// it falls back to `Allow` with a warning log so the daemon stays
+/// usable without a UI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Policy {
+    Allow,
+    Deny,
+    Ask,
+}
+
+impl Policy {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Policy::Allow => "allow",
+            Policy::Deny => "deny",
+            Policy::Ask => "ask",
+        }
+    }
+
+    pub fn from_str_strict(s: &str) -> Option<Self> {
+        match s {
+            "allow" => Some(Policy::Allow),
+            "deny" => Some(Policy::Deny),
+            "ask" => Some(Policy::Ask),
+            _ => None,
+        }
+    }
+}
