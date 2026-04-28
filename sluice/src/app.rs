@@ -18,6 +18,15 @@ pub struct SluiceApp {
     default_policy: String,
     events: VecDeque<Event>,
     pending_prompts: VecDeque<PendingPrompt>,
+    tab: Tab,
+}
+
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tab {
+    #[default]
+    Events,
+    Rules,
+    Policy,
 }
 
 #[derive(Clone)]
@@ -48,6 +57,7 @@ pub enum Message {
     Ipc(ClientMessage),
     Allow(u32),
     Deny(u32),
+    SelectTab(Tab),
 }
 
 impl SluiceApp {
@@ -78,6 +88,7 @@ impl SluiceApp {
             }
             Message::Allow(pid) => self.dispatch_verdict(pid, "allow"),
             Message::Deny(pid) => self.dispatch_verdict(pid, "deny"),
+            Message::SelectTab(tab) => self.tab = tab,
         }
         Task::none()
     }
@@ -123,10 +134,49 @@ impl SluiceApp {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        column![self.header(), self.prompts_view(), self.events_view()]
-            .spacing(12)
-            .padding(16)
-            .into()
+        let tab_view: Element<'_, Message> = match self.tab {
+            Tab::Events => self.events_view(),
+            Tab::Rules => self.rules_view(),
+            Tab::Policy => self.policy_view(),
+        };
+        column![
+            self.header(),
+            self.tab_bar(),
+            self.prompts_view(),
+            tab_view
+        ]
+        .spacing(12)
+        .padding(16)
+        .into()
+    }
+
+    fn tab_bar(&self) -> Element<'_, Message> {
+        let make = |label: &str, tab: Tab| -> Element<'_, Message> {
+            let mut b = button(text(label.to_string())).on_press(Message::SelectTab(tab));
+            if self.tab == tab {
+                // Mark the active tab visually with a wider button.
+                // iced 0.13 doesn't expose a clean "selected" style on
+                // the basic Button, so we lean on width as the hint.
+                b = b.width(Length::Fixed(110.0));
+            }
+            b.into()
+        };
+        row![
+            make("Events", Tab::Events),
+            make("Rules", Tab::Rules),
+            make("Policy", Tab::Policy),
+        ]
+        .spacing(6)
+        .into()
+    }
+
+    fn rules_view(&self) -> Element<'_, Message> {
+        // Real implementation lands in the next commit (task 70).
+        text("rules manager — coming up").size(14).into()
+    }
+
+    fn policy_view(&self) -> Element<'_, Message> {
+        text("policy controls — coming up").size(14).into()
     }
 
     fn prompts_view(&self) -> Element<'_, Message> {
