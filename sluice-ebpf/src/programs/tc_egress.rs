@@ -20,7 +20,7 @@ use aya_ebpf::{
     programs::TcContext,
 };
 
-use crate::maps::{RATE_LIMITS, SOCK_PIDS};
+use crate::maps::{RATE_LIMITS, SOCK_PIDS, TX_BYTES};
 
 const TC_ACT_OK: i32 = 0;
 const TC_ACT_SHOT: i32 = 2;
@@ -47,6 +47,14 @@ fn decide(ctx: &TcContext) -> Option<i32> {
     }
 
     let pid = unsafe { SOCK_PIDS.get(&cookie) }.copied()?;
+
+    // Increment the per-PID byte counter regardless of whether the
+    // bucket lets the packet through — userspace can compute "drop
+    // rate" later if it wants. Races between cores produce undercount
+    // but never go backwards.
+    let pkt_len = ctx.len() as u64;
+    let prev = unsafe { TX_BYTES.get(&pid) }.copied().unwrap_or(0);
+    let _ = TX_BYTES.insert(&pid, &(prev + pkt_len), 0);
 
     let bucket_ptr = RATE_LIMITS.get_ptr_mut(&pid)?;
     // SAFETY: `get_ptr_mut` returns a valid map pointer (`Some`) only
@@ -75,7 +83,6 @@ fn decide(ctx: &TcContext) -> Option<i32> {
     }
     bucket.last_refill_ns = now_ns;
 
-    let pkt_len = ctx.len() as u64;
     if tokens >= pkt_len {
         bucket.tokens = tokens - pkt_len;
         Some(TC_ACT_OK)

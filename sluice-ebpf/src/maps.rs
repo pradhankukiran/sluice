@@ -36,3 +36,11 @@ pub static SOCK_PIDS: LruHashMap<u64, u32> = LruHashMap::with_max_entries(131_07
 /// tc-bpf classifier on every packet.
 #[map]
 pub static RATE_LIMITS: HashMap<u32, TokenBucket> = HashMap::with_max_entries(65_536, 0);
+
+/// Cumulative egress bytes per PID. Incremented by the tc classifier
+/// for every packet that *passes* the rate-limit check (drops are not
+/// counted as egress traffic). Userspace samples this on a tokio
+/// interval, computes deltas, and pushes throughput updates to the
+/// GUI.
+#[map]
+pub static TX_BYTES: HashMap<u32, u64> = HashMap::with_max_entries(65_536, 0);
