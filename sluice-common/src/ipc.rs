@@ -91,9 +91,7 @@ pub enum Request {
         burst_bytes: u64,
     },
     /// Remove the per-PID rate-limit entry entirely.
-    ClearRate {
-        pid: u32,
-    },
+    ClearRate { pid: u32 },
     /// Snapshot the current per-PID rate limit table.
     ListRates,
 }

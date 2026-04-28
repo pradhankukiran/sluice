@@ -13,7 +13,9 @@ use std::fs::File;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use aya::programs::{tc, CgroupAttachMode, CgroupSock, CgroupSockAddr, SchedClassifier, TcAttachType};
+use aya::programs::{
+    tc, CgroupAttachMode, CgroupSock, CgroupSockAddr, SchedClassifier, TcAttachType,
+};
 use aya::Ebpf;
 
 const PROG_CONNECT4: &str = "sluice_connect4";
@@ -52,11 +54,7 @@ fn load_and_attach_sock_addr(
     Ok(name)
 }
 
-fn load_and_attach_sock(
-    bpf: &mut Ebpf,
-    name: &'static str,
-    cgroup: &File,
-) -> Result<&'static str> {
+fn load_and_attach_sock(bpf: &mut Ebpf, name: &'static str, cgroup: &File) -> Result<&'static str> {
     let prog: &mut CgroupSock = bpf
         .program_mut(name)
         .with_context(|| format!("eBPF object missing program `{name}`"))?
@@ -139,8 +137,8 @@ fn list_attachable_interfaces() -> Result<Vec<String>> {
         }
         // Only attach if the interface is up.
         let operstate_path = entry.path().join("operstate");
-        let operstate = std::fs::read_to_string(&operstate_path)
-            .unwrap_or_else(|_| String::from("unknown"));
+        let operstate =
+            std::fs::read_to_string(&operstate_path).unwrap_or_else(|_| String::from("unknown"));
         let operstate = operstate.trim();
         if operstate == "up" || operstate == "unknown" {
             out.push(name_str.to_string());
