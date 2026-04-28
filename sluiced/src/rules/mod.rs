@@ -15,5 +15,5 @@
 //! - [`policy`]  — default policy when no rule matches.
 //! - [`schema`]  — SQL DDL + migrations.
 
-// Submodule files (`types`, `matcher`, etc.) land in subsequent commits
-// this phase. This `mod.rs` exists now to anchor the directory.
+pub mod types;
+
