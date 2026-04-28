@@ -1,0 +1,7 @@
+[toolchain]
+# eBPF programs are compiled to BPF bytecode via bpf-linker. The target
+# `bpfel-unknown-none` is tier-3 and currently requires a nightly toolchain
+# for `-Z build-std=core`. Pinned to a known-good Aya-compatible nightly.
+channel = "nightly-2026-01-15"
+components = ["rust-src", "rustfmt", "clippy"]
+profile = "minimal"
