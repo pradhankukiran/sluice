@@ -1,0 +1,20 @@
+[package]
+name = "sluiced"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Privileged sluice daemon — loads eBPF programs, owns the rules database, talks to the GUI over a Unix socket."
+
+[[bin]]
+name = "sluiced"
+path = "src/main.rs"
+
+[dependencies]
+sluice-common = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
