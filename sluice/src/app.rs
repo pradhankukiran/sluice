@@ -186,6 +186,8 @@ impl SluiceApp {
                 self.rules = rules.clone();
                 self.default_policy = default_policy.clone();
             }
+            // Bandwidth tab + state hookup arrives in the next commit.
+            Event::RatesChanged { .. } => {}
         }
         if self.events.len() == MAX_EVENTS {
             self.events.pop_back();
@@ -436,6 +438,9 @@ fn event_row(evt: &Event) -> Element<'_, Message> {
         }
         Event::RulesChanged { rules, .. } => {
             format!("rules changed (now {})", rules.len())
+        }
+        Event::RatesChanged { entries } => {
+            format!("rates changed (now {})", entries.len())
         }
     };
     container(text(line).size(13))

@@ -192,6 +192,15 @@ async fn handle_client(
                         },
                     )
                     .await?;
+                    // Seed the new subscriber with the current rate
+                    // table so the GUI doesn't need a separate
+                    // `ListRates` request before showing the Bandwidth
+                    // tab.
+                    send_frame(
+                        &mut write_half,
+                        &Frame::Event(build_rates_changed_event(&handle)),
+                    )
+                    .await?;
                     let rx = events_tx.subscribe();
                     return stream_events(reader, write_half, rx, handle, events_tx).await;
                 }
@@ -232,10 +241,16 @@ async fn handle_client(
                     burst_bytes,
                 } => {
                     let response = apply_set_rate(&handle, pid, rate_bps, burst_bytes);
+                    if matches!(response, Response::RateUpdated { .. }) {
+                        let _ = events_tx.send(build_rates_changed_event(&handle));
+                    }
                     send_frame(&mut write_half, &Frame::Response { id, body: response }).await?;
                 }
                 Request::ClearRate { pid } => {
                     let response = apply_clear_rate(&handle, pid);
+                    if matches!(response, Response::RateCleared { .. }) {
+                        let _ = events_tx.send(build_rates_changed_event(&handle));
+                    }
                     send_frame(&mut write_half, &Frame::Response { id, body: response }).await?;
                 }
                 Request::ListRates => {
@@ -325,9 +340,19 @@ async fn stream_events(
                             resp
                         }
                         Request::SetRate { pid, rate_bps, burst_bytes } => {
-                            apply_set_rate(&handle, pid, rate_bps, burst_bytes)
+                            let resp = apply_set_rate(&handle, pid, rate_bps, burst_bytes);
+                            if matches!(resp, Response::RateUpdated { .. }) {
+                                let _ = events_tx_for_stream.send(build_rates_changed_event(&handle));
+                            }
+                            resp
                         }
-                        Request::ClearRate { pid } => apply_clear_rate(&handle, pid),
+                        Request::ClearRate { pid } => {
+                            let resp = apply_clear_rate(&handle, pid);
+                            if matches!(resp, Response::RateCleared { .. }) {
+                                let _ = events_tx_for_stream.send(build_rates_changed_event(&handle));
+                            }
+                            resp
+                        }
                         Request::ListRates => apply_list_rates(&handle),
                         // Hello/Snapshot/SubscribeEvents during a stream
                         // are ignored.
@@ -621,6 +646,22 @@ fn build_snapshot_response(handle: &DaemonHandle) -> Response {
         rules,
         default_policy,
     }
+}
+
+pub fn build_rates_changed_event(handle: &DaemonHandle) -> Event {
+    let entries = match handle.kernel_rates.lock() {
+        Ok(rl) => rl
+            .list()
+            .into_iter()
+            .map(|(pid, rate_bps, burst_bytes)| RateEntry {
+                pid,
+                rate_bps,
+                burst_bytes,
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    Event::RatesChanged { entries }
 }
 
 pub fn build_rules_changed_event(handle: &DaemonHandle) -> Event {
