@@ -3,6 +3,7 @@
 mod attach;
 mod cgroup;
 mod ebpf_loader;
+mod formatter;
 mod ring_reader;
 
 use anyhow::Result;
@@ -38,14 +39,7 @@ async fn main() -> Result<()> {
 
     tokio::select! {
         result = reader.run(|event| {
-            tracing::info!(
-                pid = event.tgid,
-                tid = event.pid,
-                uid = event.uid,
-                family = event.family,
-                dport = event.dport,
-                "connection",
-            );
+            tracing::info!(target: "sluice::connect", "{}", formatter::format_event(event));
         }) => {
             result?;
         }
