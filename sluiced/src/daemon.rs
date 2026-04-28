@@ -3,19 +3,26 @@
 //! Splits cleanly from the CLI subcommand handlers so non-daemon code
 //! paths (`rules add`, `policy show`, ...) don't drag in eBPF or tokio.
 
+use std::sync::Arc;
+
 use anyhow::Result;
+use sluice_common::ipc::{self, resolve_socket_path};
 use sluice_common::Verdict;
+use tokio::sync::broadcast;
 
 use crate::attach;
 use crate::cgroup;
 use crate::ebpf_loader;
 use crate::formatter;
+use crate::ipc_server;
 use crate::kernel_map::KernelVerdictMap;
 use crate::proc_cache::ProcInfoCache;
 use crate::ring_reader::EventReader;
 use crate::rules::matcher;
 use crate::rules::store::{resolve_db_path, SqliteRuleStore};
 use crate::rules::types::Policy;
+
+const EVENT_BROADCAST_CAPACITY: usize = 1024;
 
 pub fn run() -> Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -70,6 +77,23 @@ async fn run_async() -> Result<()> {
         tracing::info!(program = name, "attached to cgroup");
     }
 
+    // Spin up the IPC server before entering the event loop so the GUI
+    // can connect as soon as `sluiced` reports it's ready.
+    let snapshot = Arc::new(ipc_server::build_snapshot(&rules, policy.as_str()));
+    let (events_tx, _) = broadcast::channel::<ipc::Event>(EVENT_BROADCAST_CAPACITY);
+    let socket_path = resolve_socket_path();
+    let ipc_handle = {
+        let snapshot = Arc::clone(&snapshot);
+        let events_tx = events_tx.clone();
+        let socket_path = socket_path.clone();
+        tokio::spawn(async move {
+            if let Err(err) = ipc_server::serve(&socket_path, snapshot, events_tx).await {
+                tracing::error!(error = %err, "ipc server failed");
+            }
+        })
+    };
+    tracing::info!(socket = %socket_path.display(), "ipc server spawned");
+
     let mut reader = EventReader::from_ebpf(&mut bpf)?;
     let mut cache = ProcInfoCache::with_default_capacity();
     tracing::info!("event reader ready, watching for connections");
@@ -100,6 +124,11 @@ async fn run_async() -> Result<()> {
                 "{}",
                 formatter::format_enriched_event(event, info),
             );
+
+            // Best-effort: a missing subscriber means no GUI is
+            // connected, which is fine. `send` errors only when *no*
+            // receivers exist, so ignoring is correct.
+            let _ = events_tx.send(ipc_server::build_connection_event(event, info, verdict));
         }) => {
             result?;
         }
@@ -107,6 +136,9 @@ async fn run_async() -> Result<()> {
             tracing::info!("received ctrl-c, shutting down");
         }
     }
+
+    ipc_handle.abort();
+    let _ = std::fs::remove_file(&socket_path);
 
     Ok(())
 }

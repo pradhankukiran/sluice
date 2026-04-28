@@ -1,7 +1,3 @@
-// `serve` and the per-connection helpers light up when daemon::run
-// spawns this in the next commit; the broadcast wiring follows.
-#![allow(dead_code)]
-
 //! Newline-delimited JSON IPC server, listening on a Unix socket.
 //!
 //! One task per connection. Clients send `Frame::Request`s; the server
@@ -10,15 +6,21 @@
 //! the server pushes `Frame::Event` records as they arrive on the
 //! shared broadcast channel.
 
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use sluice_common::event::{ConnectEvent, COMM_LEN, FAMILY_INET, FAMILY_INET6, PROTO_TCP, PROTO_UDP};
 use sluice_common::ipc::{Event, Frame, Request, Response, RuleSummary};
+use sluice_common::Verdict;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::broadcast;
+
+use crate::proc_info::ProcInfo;
+use crate::rules::types::{ExeMatch, HostMatch, PortMatch, ProtocolMatch, Rule};
 
 const SOCKET_MODE: u32 = 0o666;
 
@@ -201,4 +203,119 @@ async fn send_frame(
     writer.write_all(&json).await?;
     writer.flush().await?;
     Ok(())
+}
+
+// ---------- adapters from internal types to IPC types ----------
+
+pub fn build_snapshot(rules: &[Rule], default_policy: &str) -> Snapshot {
+    Snapshot {
+        rules: rules.iter().map(rule_summary).collect(),
+        default_policy: default_policy.to_string(),
+    }
+}
+
+pub fn build_connection_event(
+    e: &ConnectEvent,
+    info: &ProcInfo,
+    verdict: Verdict,
+) -> Event {
+    Event::Connection {
+        timestamp_ns: e.timestamp_ns,
+        pid: e.tgid,
+        exe: info.exe.as_ref().map(|p| p.display().to_string()),
+        cmdline: info.cmdline.clone(),
+        family: family_str(e.family).to_string(),
+        protocol: protocol_str(e.protocol).to_string(),
+        addr: format_addr(e),
+        dport: e.dport,
+        verdict: verdict_label(verdict).to_string(),
+    }
+}
+
+fn rule_summary(rule: &Rule) -> RuleSummary {
+    RuleSummary {
+        id: rule.id,
+        exe: format_exe(&rule.exe_match),
+        host: format_host(&rule.host),
+        port: format_port(&rule.port),
+        protocol: format_protocol(&rule.protocol),
+        verdict: verdict_label(rule.verdict).to_string(),
+    }
+}
+
+fn format_exe(m: &ExeMatch) -> String {
+    match m {
+        ExeMatch::Any => "any".to_string(),
+        ExeMatch::Exact(p) => p.display().to_string(),
+    }
+}
+
+fn format_host(m: &HostMatch) -> String {
+    match m {
+        HostMatch::Any => "any".to_string(),
+        HostMatch::Ip(ip) => ip.to_string(),
+        HostMatch::Cidr {
+            network,
+            prefix_len,
+        } => format!("{network}/{prefix_len}"),
+        HostMatch::Hostname(h) => h.clone(),
+    }
+}
+
+fn format_port(m: &PortMatch) -> String {
+    match m {
+        PortMatch::Any => "any".to_string(),
+        PortMatch::Single(p) => p.to_string(),
+        PortMatch::Range {
+            start,
+            end_inclusive,
+        } => format!("{start}-{end_inclusive}"),
+    }
+}
+
+fn format_protocol(m: &ProtocolMatch) -> String {
+    match m {
+        ProtocolMatch::Any => "any".to_string(),
+        ProtocolMatch::Tcp => "tcp".to_string(),
+        ProtocolMatch::Udp => "udp".to_string(),
+    }
+}
+
+fn family_str(family: u16) -> &'static str {
+    match family {
+        FAMILY_INET => "ipv4",
+        FAMILY_INET6 => "ipv6",
+        _ => "?",
+    }
+}
+
+fn protocol_str(proto: u8) -> &'static str {
+    match proto {
+        PROTO_TCP => "tcp",
+        PROTO_UDP => "udp",
+        _ => "?",
+    }
+}
+
+const fn verdict_label(v: Verdict) -> &'static str {
+    match v {
+        Verdict::Allow => "allow",
+        Verdict::Deny => "deny",
+        Verdict::Unknown => "unknown",
+    }
+}
+
+fn format_addr(e: &ConnectEvent) -> String {
+    match e.family {
+        FAMILY_INET => {
+            Ipv4Addr::new(e.addr[0], e.addr[1], e.addr[2], e.addr[3]).to_string()
+        }
+        FAMILY_INET6 => Ipv6Addr::from(e.addr).to_string(),
+        _ => {
+            // Best-effort: render the comm bytes so the user can at
+            // least see *which* process logged an unknown family.
+            let null_pos = e.comm.iter().position(|&b| b == 0).unwrap_or(COMM_LEN);
+            format!("(family={}, comm={})", e.family, String::from_utf8_lossy(&e.comm[..null_pos]))
+        }
+    }
 }
