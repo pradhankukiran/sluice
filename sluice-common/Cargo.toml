@@ -12,7 +12,8 @@ description = "Types shared between sluice-ebpf (kernel) and sluice/sluiced (use
 default = ["std"]
 # Userspace builds enable `std` for serde and Display impls. The eBPF crate
 # depends on this with `default-features = false` to stay no_std.
-std = ["serde/std"]
+std = ["serde/std", "dep:serde_json"]
 
 [dependencies]
 serde = { workspace = true }
+serde_json = { workspace = true, optional = true }

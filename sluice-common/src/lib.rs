@@ -10,5 +10,8 @@
 pub mod event;
 pub mod verdict;
 
+#[cfg(feature = "std")]
+pub mod ipc;
+
 pub use event::ConnectEvent;
 pub use verdict::Verdict;
