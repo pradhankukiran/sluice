@@ -4,7 +4,7 @@
 //! paths (`rules add`, `policy show`, ...) don't drag in eBPF or tokio.
 
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use anyhow::Result;
 use sluice_common::ipc::{self, resolve_socket_path};
@@ -38,23 +38,21 @@ async fn run_async() -> Result<()> {
     let db_path = resolve_db_path();
     tracing::info!(path = %db_path.display(), "rules database path");
     let store = SqliteRuleStore::open(&db_path)?;
-    let rules = store.list()?;
-    let policy = store.default_policy()?;
+    let initial_rules = store.list()?;
+    let initial_policy = store.default_policy()?;
     tracing::info!(
-        rule_count = rules.len(),
-        default_policy = policy.as_str(),
+        rule_count = initial_rules.len(),
+        default_policy = initial_policy.as_str(),
         "rule store loaded"
     );
-    // For Allow / Deny we have a static fallback verdict; for Ask we
-    // dispatch to the prompt path below and treat the *current* event as
-    // allow (the kernel can't block while waiting for the user — phase
-    // 7 is mode-B "first slips through"). Subsequent events from the
-    // same PID hit the kernel verdict map after SetVerdict lands.
-    let fallback_verdict = match policy {
-        Policy::Allow => Verdict::Allow,
-        Policy::Deny => Verdict::Deny,
-        Policy::Ask => Verdict::Allow,
-    };
+
+    // Rules and policy live behind RwLock so the IPC server can mutate
+    // them at runtime; the event handler reads them on every event,
+    // which keeps the daemon honest across `AddRule` / `SetPolicy`
+    // requests without a separate reload step.
+    let rules = Arc::new(RwLock::new(initial_rules));
+    let policy = Arc::new(RwLock::new(initial_policy));
+    let store = Arc::new(Mutex::new(store));
 
     let cgroup_root = cgroup::resolve()?;
     tracing::info!(path = %cgroup_root.display(), "cgroup v2 root resolved");
@@ -65,12 +63,15 @@ async fn run_async() -> Result<()> {
     tracing::info!("eBPF object loaded");
 
     let mut kernel_map = KernelVerdictMap::from_ebpf(&mut bpf)?;
-    let (touched, pushed) = kernel_map.populate_from_proc(&rules)?;
-    tracing::info!(
-        pids_seen = touched,
-        verdicts_pushed = pushed,
-        "kernel verdict map populated from /proc"
-    );
+    {
+        let rules_guard = rules.read().expect("rules lock");
+        let (touched, pushed) = kernel_map.populate_from_proc(&rules_guard)?;
+        tracing::info!(
+            pids_seen = touched,
+            verdicts_pushed = pushed,
+            "kernel verdict map populated from /proc"
+        );
+    }
     let kernel_map = Arc::new(Mutex::new(kernel_map));
     let pending_prompts: Arc<Mutex<HashSet<u32>>> = Arc::new(Mutex::new(HashSet::new()));
 
@@ -81,22 +82,21 @@ async fn run_async() -> Result<()> {
 
     // Spin up the IPC server before entering the event loop so the GUI
     // can connect as soon as `sluiced` reports it's ready.
-    let snapshot = Arc::new(ipc_server::build_snapshot(&rules, policy.as_str()));
     let (events_tx, _) = broadcast::channel::<ipc::Event>(EVENT_BROADCAST_CAPACITY);
     let socket_path = resolve_socket_path();
     let daemon_handle = ipc_server::DaemonHandle {
         kernel_map: Arc::clone(&kernel_map),
         pending_prompts: Arc::clone(&pending_prompts),
+        rules: Arc::clone(&rules),
+        policy: Arc::clone(&policy),
+        store: Arc::clone(&store),
     };
     let ipc_handle = {
-        let snapshot = Arc::clone(&snapshot);
         let events_tx = events_tx.clone();
         let socket_path = socket_path.clone();
         let daemon_handle = daemon_handle.clone();
         tokio::spawn(async move {
-            if let Err(err) =
-                ipc_server::serve(&socket_path, snapshot, events_tx, daemon_handle).await
-            {
+            if let Err(err) = ipc_server::serve(&socket_path, events_tx, daemon_handle).await {
                 tracing::error!(error = %err, "ipc server failed");
             }
         })
@@ -111,13 +111,25 @@ async fn run_async() -> Result<()> {
         result = reader.run(|event| {
             let info = cache.lookup_or_fetch(event.tgid);
 
+            // Snapshot the current rules + policy under their read locks.
+            // Both are very lightly contended — only mutated by the IPC
+            // server on AddRule / SetPolicy.
+            let rules_guard = match rules.read() {
+                Ok(g) => g,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            let current_policy = match policy.read() {
+                Ok(g) => *g,
+                Err(poisoned) => *poisoned.into_inner(),
+            };
+
             // Lazy population: a process that started after our `/proc`
             // walk hits this path on its first outbound connect. We push
             // its verdict so subsequent connects from the same PID
             // short-circuit in the kernel.
             if let Ok(mut km) = kernel_map.lock() {
                 if !km.has_seen(event.tgid) {
-                    if let Err(err) = km.evaluate_and_push(event.tgid, &rules) {
+                    if let Err(err) = km.evaluate_and_push(event.tgid, &rules_guard) {
                         tracing::warn!(
                             pid = event.tgid,
                             error = %err,
@@ -127,14 +139,14 @@ async fn run_async() -> Result<()> {
                 }
             }
 
-            let rule_verdict = matcher::evaluate(&rules, event, info);
+            let rule_verdict = matcher::evaluate(&rules_guard, event, info);
 
             // Under Ask, an unmatched event triggers a one-shot prompt
             // (deduped per PID) and resolves to "allow" for *this*
             // connection. Subsequent connects from the same PID will
             // honour the user's verdict once SetVerdict updates the
             // kernel map.
-            if rule_verdict.is_none() && policy == Policy::Ask {
+            if rule_verdict.is_none() && current_policy == Policy::Ask {
                 let newly_pending = pending_prompts
                     .lock()
                     .map(|mut set| set.insert(event.tgid))
@@ -144,6 +156,11 @@ async fn run_async() -> Result<()> {
                 }
             }
 
+            let fallback_verdict = match current_policy {
+                Policy::Allow => Verdict::Allow,
+                Policy::Deny => Verdict::Deny,
+                Policy::Ask => Verdict::Allow,
+            };
             let verdict = rule_verdict.unwrap_or(fallback_verdict);
             tracing::info!(
                 target: "sluice::connect",

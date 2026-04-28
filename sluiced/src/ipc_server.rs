@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use anyhow::{Context, Result};
 use sluice_common::event::{
@@ -24,30 +24,26 @@ use tokio::sync::broadcast;
 
 use crate::kernel_map::KernelVerdictMap;
 use crate::proc_info::ProcInfo;
-use crate::rules::types::{ExeMatch, HostMatch, PortMatch, ProtocolMatch, Rule};
+use crate::rules::store::SqliteRuleStore;
+use crate::rules::types::{ExeMatch, HostMatch, Policy, PortMatch, ProtocolMatch, Rule};
 
-/// Shared state the IPC server mutates on behalf of clients (currently
-/// just `SetVerdict`; phase 8 will add rule edits).
+/// Shared state the IPC server mutates on behalf of clients. `store`
+/// is wired in for the AddRule / DeleteRule handlers in the next
+/// commit; for now it would otherwise warn dead.
 #[derive(Clone)]
 pub struct DaemonHandle {
     pub kernel_map: Arc<Mutex<KernelVerdictMap>>,
     pub pending_prompts: Arc<Mutex<HashSet<u32>>>,
+    pub rules: Arc<RwLock<Vec<Rule>>>,
+    pub policy: Arc<RwLock<Policy>>,
+    #[allow(dead_code)]
+    pub store: Arc<Mutex<SqliteRuleStore>>,
 }
 
 const SOCKET_MODE: u32 = 0o666;
 
-/// Snapshot data the server can hand to clients in response to
-/// `Request::Snapshot`. The daemon owns the source of truth and clones
-/// this when it spins up the IPC server.
-#[derive(Clone)]
-pub struct Snapshot {
-    pub rules: Vec<RuleSummary>,
-    pub default_policy: String,
-}
-
 pub async fn serve(
     socket_path: &Path,
-    snapshot: Arc<Snapshot>,
     events_tx: broadcast::Sender<Event>,
     handle: DaemonHandle,
 ) -> Result<()> {
@@ -80,11 +76,10 @@ pub async fn serve(
             .accept()
             .await
             .context("accepting ipc connection")?;
-        let snapshot = Arc::clone(&snapshot);
         let events_tx = events_tx.clone();
         let handle = handle.clone();
         tokio::spawn(async move {
-            if let Err(err) = handle_client(stream, snapshot, events_tx, handle).await {
+            if let Err(err) = handle_client(stream, events_tx, handle).await {
                 tracing::warn!(error = %err, "ipc client closed with error");
             }
         });
@@ -93,7 +88,6 @@ pub async fn serve(
 
 async fn handle_client(
     stream: UnixStream,
-    snapshot: Arc<Snapshot>,
     events_tx: broadcast::Sender<Event>,
     handle: DaemonHandle,
 ) -> Result<()> {
@@ -133,14 +127,12 @@ async fn handle_client(
                     .await?;
                 }
                 Request::Snapshot => {
+                    let snapshot = build_snapshot_response(&handle);
                     send_frame(
                         &mut write_half,
                         &Frame::Response {
                             id,
-                            body: Response::Snapshot {
-                                rules: snapshot.rules.clone(),
-                                default_policy: snapshot.default_policy.clone(),
-                            },
+                            body: snapshot,
                         },
                     )
                     .await?;
@@ -285,10 +277,37 @@ async fn send_frame(writer: &mut tokio::net::unix::OwnedWriteHalf, frame: &Frame
 
 // ---------- adapters from internal types to IPC types ----------
 
-pub fn build_snapshot(rules: &[Rule], default_policy: &str) -> Snapshot {
-    Snapshot {
-        rules: rules.iter().map(rule_summary).collect(),
-        default_policy: default_policy.to_string(),
+fn build_snapshot_response(handle: &DaemonHandle) -> Response {
+    let rules = match handle.rules.read() {
+        Ok(g) => g.iter().map(rule_summary).collect(),
+        Err(_) => Vec::new(),
+    };
+    let default_policy = handle
+        .policy
+        .read()
+        .map(|p| p.as_str().to_string())
+        .unwrap_or_else(|_| "allow".to_string());
+    Response::Snapshot {
+        rules,
+        default_policy,
+    }
+}
+
+// Used by the AddRule / DeleteRule / SetPolicy handlers (added next).
+#[allow(dead_code)]
+pub fn build_rules_changed_event(handle: &DaemonHandle) -> Event {
+    let rules = match handle.rules.read() {
+        Ok(g) => g.iter().map(rule_summary).collect(),
+        Err(_) => Vec::new(),
+    };
+    let default_policy = handle
+        .policy
+        .read()
+        .map(|p| p.as_str().to_string())
+        .unwrap_or_else(|_| "allow".to_string());
+    Event::RulesChanged {
+        rules,
+        default_policy,
     }
 }
 
