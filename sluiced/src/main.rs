@@ -4,6 +4,7 @@ mod attach;
 mod cgroup;
 mod cli;
 mod daemon;
+mod dns_cache;
 mod ebpf_loader;
 mod formatter;
 mod ipc_server;
