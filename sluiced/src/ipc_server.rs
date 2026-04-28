@@ -12,7 +12,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use sluice_common::event::{ConnectEvent, COMM_LEN, FAMILY_INET, FAMILY_INET6, PROTO_TCP, PROTO_UDP};
+use sluice_common::event::{
+    ConnectEvent, COMM_LEN, FAMILY_INET, FAMILY_INET6, PROTO_TCP, PROTO_UDP,
+};
 use sluice_common::ipc::{Event, Frame, Request, Response, RuleSummary};
 use sluice_common::Verdict;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -39,9 +41,8 @@ pub async fn serve(
     events_tx: broadcast::Sender<Event>,
 ) -> Result<()> {
     if let Some(parent) = socket_path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| {
-            format!("creating ipc socket parent dir {}", parent.display())
-        })?;
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating ipc socket parent dir {}", parent.display()))?;
     }
     // Remove any stale socket from a previous run; bind would otherwise
     // fail with EADDRINUSE.
@@ -194,10 +195,7 @@ async fn stream_events(
     Ok(())
 }
 
-async fn send_frame(
-    writer: &mut tokio::net::unix::OwnedWriteHalf,
-    frame: &Frame,
-) -> Result<()> {
+async fn send_frame(writer: &mut tokio::net::unix::OwnedWriteHalf, frame: &Frame) -> Result<()> {
     let mut json = serde_json::to_vec(frame).context("encoding frame")?;
     json.push(b'\n');
     writer.write_all(&json).await?;
@@ -214,11 +212,7 @@ pub fn build_snapshot(rules: &[Rule], default_policy: &str) -> Snapshot {
     }
 }
 
-pub fn build_connection_event(
-    e: &ConnectEvent,
-    info: &ProcInfo,
-    verdict: Verdict,
-) -> Event {
+pub fn build_connection_event(e: &ConnectEvent, info: &ProcInfo, verdict: Verdict) -> Event {
     Event::Connection {
         timestamp_ns: e.timestamp_ns,
         pid: e.tgid,
@@ -307,15 +301,17 @@ const fn verdict_label(v: Verdict) -> &'static str {
 
 fn format_addr(e: &ConnectEvent) -> String {
     match e.family {
-        FAMILY_INET => {
-            Ipv4Addr::new(e.addr[0], e.addr[1], e.addr[2], e.addr[3]).to_string()
-        }
+        FAMILY_INET => Ipv4Addr::new(e.addr[0], e.addr[1], e.addr[2], e.addr[3]).to_string(),
         FAMILY_INET6 => Ipv6Addr::from(e.addr).to_string(),
         _ => {
             // Best-effort: render the comm bytes so the user can at
             // least see *which* process logged an unknown family.
             let null_pos = e.comm.iter().position(|&b| b == 0).unwrap_or(COMM_LEN);
-            format!("(family={}, comm={})", e.family, String::from_utf8_lossy(&e.comm[..null_pos]))
+            format!(
+                "(family={}, comm={})",
+                e.family,
+                String::from_utf8_lossy(&e.comm[..null_pos])
+            )
         }
     }
 }

@@ -154,4 +154,3 @@ fn event_row(evt: &Event) -> Element<'_, Message> {
         .width(Length::Fill)
         .into()
 }
-

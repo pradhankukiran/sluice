@@ -39,10 +39,7 @@ pub enum Frame {
         body: Request,
     },
     /// Server → client, paired with a prior `Request`.
-    Response {
-        id: u64,
-        body: Response,
-    },
+    Response { id: u64, body: Response },
     /// Server → client, asynchronous (no `id`). Used for the event
     /// stream after a successful `SubscribeEvents`.
     Event(Event),
