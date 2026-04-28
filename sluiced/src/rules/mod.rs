@@ -16,6 +16,7 @@
 //! - [`schema`]  — SQL DDL + migrations.
 
 pub mod matcher;
+pub mod parse;
 pub mod schema;
 pub mod store;
 pub mod types;

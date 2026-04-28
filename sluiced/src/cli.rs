@@ -6,11 +6,12 @@
 //! subcommands let operators populate rules without a GUI — the GUI
 //! arrives in phase 6.
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+use crate::rules::parse::{parse_exe, parse_host, parse_policy, parse_port, parse_protocol, parse_verdict};
 use crate::rules::store::{resolve_db_path, SqliteRuleStore};
-use crate::rules::types::{ExeMatch, HostMatch, Policy, PortMatch, ProtocolMatch, Rule, Verdict};
+use crate::rules::types::{ExeMatch, HostMatch, PortMatch, ProtocolMatch, Rule, Verdict};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -164,85 +165,10 @@ fn show_policy(store: &SqliteRuleStore) -> Result<()> {
 }
 
 fn set_policy(store: &SqliteRuleStore, raw: &str) -> Result<()> {
-    let policy = Policy::from_str_strict(raw)
-        .ok_or_else(|| anyhow!("invalid policy {raw}; expected allow|deny|ask"))?;
+    let policy = parse_policy(raw)?;
     store.set_default_policy(policy)?;
     println!("default policy set to {}", policy.as_str());
     Ok(())
-}
-
-// ---------- input parsers ----------
-
-fn parse_exe(s: &str) -> Result<ExeMatch> {
-    if s == "any" {
-        return Ok(ExeMatch::Any);
-    }
-    if !s.starts_with('/') {
-        return Err(anyhow!("exe must be `any` or an absolute path, got `{s}`"));
-    }
-    Ok(ExeMatch::Exact(std::path::PathBuf::from(s)))
-}
-
-fn parse_host(s: &str) -> Result<HostMatch> {
-    use std::net::IpAddr;
-    use std::str::FromStr;
-
-    if s == "any" {
-        return Ok(HostMatch::Any);
-    }
-    if let Some((net, prefix)) = s.split_once('/') {
-        let network =
-            IpAddr::from_str(net).map_err(|e| anyhow!("invalid CIDR network `{net}`: {e}"))?;
-        let prefix_len: u8 = prefix
-            .parse()
-            .map_err(|e| anyhow!("invalid CIDR prefix `{prefix}`: {e}"))?;
-        return Ok(HostMatch::Cidr {
-            network,
-            prefix_len,
-        });
-    }
-    if let Ok(ip) = IpAddr::from_str(s) {
-        return Ok(HostMatch::Ip(ip));
-    }
-    // Anything else is taken as a hostname pattern. Phase 9 wires up
-    // matching against DNS-resolved names.
-    Ok(HostMatch::Hostname(s.to_string()))
-}
-
-fn parse_port(s: &str) -> Result<PortMatch> {
-    if s == "any" {
-        return Ok(PortMatch::Any);
-    }
-    if let Some((start, end)) = s.split_once('-') {
-        return Ok(PortMatch::Range {
-            start: start
-                .parse()
-                .map_err(|e| anyhow!("invalid port range start `{start}`: {e}"))?,
-            end_inclusive: end
-                .parse()
-                .map_err(|e| anyhow!("invalid port range end `{end}`: {e}"))?,
-        });
-    }
-    Ok(PortMatch::Single(
-        s.parse().map_err(|e| anyhow!("invalid port `{s}`: {e}"))?,
-    ))
-}
-
-fn parse_protocol(s: &str) -> Result<ProtocolMatch> {
-    Ok(match s {
-        "any" => ProtocolMatch::Any,
-        "tcp" => ProtocolMatch::Tcp,
-        "udp" => ProtocolMatch::Udp,
-        other => return Err(anyhow!("invalid protocol `{other}`; expected any|tcp|udp")),
-    })
-}
-
-fn parse_verdict(s: &str) -> Result<Verdict> {
-    Ok(match s {
-        "allow" => Verdict::Allow,
-        "deny" => Verdict::Deny,
-        other => return Err(anyhow!("invalid verdict `{other}`; expected allow|deny")),
-    })
 }
 
 // ---------- pretty-printing ----------
@@ -301,61 +227,3 @@ fn format_protocol(m: &ProtocolMatch) -> String {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::net::IpAddr;
-    use std::str::FromStr;
-
-    #[test]
-    fn parse_exe_accepts_any_or_absolute_path() {
-        assert_eq!(parse_exe("any").unwrap(), ExeMatch::Any);
-        assert_eq!(
-            parse_exe("/usr/bin/curl").unwrap(),
-            ExeMatch::Exact(std::path::PathBuf::from("/usr/bin/curl"))
-        );
-        assert!(parse_exe("relative/path").is_err());
-    }
-
-    #[test]
-    fn parse_host_distinguishes_ip_cidr_hostname() {
-        assert_eq!(parse_host("any").unwrap(), HostMatch::Any);
-        assert_eq!(
-            parse_host("1.2.3.4").unwrap(),
-            HostMatch::Ip(IpAddr::from_str("1.2.3.4").unwrap())
-        );
-        assert_eq!(
-            parse_host("10.0.0.0/8").unwrap(),
-            HostMatch::Cidr {
-                network: IpAddr::from_str("10.0.0.0").unwrap(),
-                prefix_len: 8,
-            }
-        );
-        assert_eq!(
-            parse_host("example.com").unwrap(),
-            HostMatch::Hostname("example.com".to_string())
-        );
-    }
-
-    #[test]
-    fn parse_port_accepts_any_single_range() {
-        assert_eq!(parse_port("any").unwrap(), PortMatch::Any);
-        assert_eq!(parse_port("443").unwrap(), PortMatch::Single(443));
-        assert_eq!(
-            parse_port("8000-8100").unwrap(),
-            PortMatch::Range {
-                start: 8000,
-                end_inclusive: 8100,
-            }
-        );
-        assert!(parse_port("not-a-number").is_err());
-    }
-
-    #[test]
-    fn parse_verdict_rejects_unknown() {
-        assert_eq!(parse_verdict("allow").unwrap(), Verdict::Allow);
-        assert_eq!(parse_verdict("deny").unwrap(), Verdict::Deny);
-        assert!(parse_verdict("ask").is_err());
-        assert!(parse_verdict("garbage").is_err());
-    }
-}
