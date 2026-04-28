@@ -66,6 +66,23 @@ pub fn read_exe(pid: u32) -> Option<PathBuf> {
     fs::read_link(format!("/proc/{pid}/exe")).ok()
 }
 
+/// Read `/proc/<pid>/cmdline` and split the NUL-separated argv. Returns an
+/// empty vector for kernel threads (which have no userspace cmdline) and
+/// processes that have already exited.
+pub fn read_cmdline(pid: u32) -> Vec<String> {
+    match fs::read(format!("/proc/{pid}/cmdline")) {
+        Ok(bytes) => parse_cmdline(&bytes),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn parse_cmdline(raw: &[u8]) -> Vec<String> {
+    raw.split(|&b| b == 0)
+        .filter(|s| !s.is_empty())
+        .map(|s| String::from_utf8_lossy(s).into_owned())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,5 +139,45 @@ mod tests {
     fn read_exe_returns_none_for_invalid_pid() {
         // PID 0 is reserved by the kernel and never a real process.
         assert_eq!(read_exe(0), None);
+    }
+
+    #[test]
+    fn parse_cmdline_handles_empty() {
+        assert!(parse_cmdline(b"").is_empty());
+    }
+
+    #[test]
+    fn parse_cmdline_handles_single_arg_with_trailing_nul() {
+        assert_eq!(parse_cmdline(b"ls\0"), vec!["ls".to_string()]);
+    }
+
+    #[test]
+    fn parse_cmdline_handles_single_arg_without_trailing_nul() {
+        assert_eq!(parse_cmdline(b"ls"), vec!["ls".to_string()]);
+    }
+
+    #[test]
+    fn parse_cmdline_handles_multiple_args() {
+        let raw = b"firefox\0--no-remote\0-P\0sluice\0";
+        assert_eq!(
+            parse_cmdline(raw),
+            vec!["firefox", "--no-remote", "-P", "sluice"]
+        );
+    }
+
+    #[test]
+    fn parse_cmdline_drops_consecutive_nuls() {
+        // Some processes pad argv with extra NULs (e.g. nginx after rewrite).
+        let raw = b"nginx\0\0\0\0master process\0";
+        assert_eq!(parse_cmdline(raw), vec!["nginx", "master process"]);
+    }
+
+    #[test]
+    fn parse_cmdline_replaces_invalid_utf8() {
+        // 0xFF is invalid UTF-8; from_utf8_lossy substitutes U+FFFD.
+        let raw = b"weird\xFFbinary\0";
+        let parsed = parse_cmdline(raw);
+        assert_eq!(parsed.len(), 1);
+        assert!(parsed[0].contains('\u{FFFD}'));
     }
 }
