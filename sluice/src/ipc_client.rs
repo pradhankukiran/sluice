@@ -86,9 +86,7 @@ async fn session(
         Response::Error { message } => {
             return Err(anyhow!("server rejected Hello: {message}"));
         }
-        Response::Snapshot { .. }
-        | Response::Subscribed
-        | Response::VerdictApplied { .. } => {
+        Response::Snapshot { .. } | Response::Subscribed | Response::VerdictApplied { .. } => {
             return Err(anyhow!("unexpected response to Hello: {hello:?}"));
         }
     };

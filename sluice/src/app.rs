@@ -131,11 +131,7 @@ impl SluiceApp {
         if self.pending_prompts.is_empty() {
             return column![].into();
         }
-        let header = text(format!(
-            "Pending prompts ({})",
-            self.pending_prompts.len()
-        ))
-        .size(16);
+        let header = text(format!("Pending prompts ({})", self.pending_prompts.len())).size(16);
 
         let rows = self
             .pending_prompts

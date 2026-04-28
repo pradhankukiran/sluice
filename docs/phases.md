@@ -11,7 +11,7 @@ commits.
 | 4 | [Rules Engine + SQLite](phase-4.md) | Rule schema, match logic, default policy, CLI subcommands |
 | 5 | [Active Blocking](phase-5.md) | Per-PID `VERDICTS` map, kernel-side deny, /proc walker, lazy update |
 | 6 | [GUI Skeleton + IPC](phase-6.md) | `iced` window + ndjson Unix socket, snapshot + live events |
-| 7 | Live Prompt Dialogs | "Allow this connection?" modal, verdict round-trip |
+| 7 | [Live Prompt Dialogs](phase-7.md) | Per-PID Prompt event, Allow/Deny round-trip, kernel map update |
 | 8 | Rules Manager UI | List, edit, delete rules; default-policy toggle |
 | 9 | DNS-Aware Rules | DNS-reply sniffing, IP→hostname map, hostname matching |
 | 10 | Bandwidth Shaping (Kernel) | `tc-bpf` egress, per-PID token buckets |
