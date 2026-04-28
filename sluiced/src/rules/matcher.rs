@@ -3,6 +3,7 @@
 //! path in the daemon hot loop.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::path::Path;
 
 use sluice_common::event::{ConnectEvent, FAMILY_INET, FAMILY_INET6, PROTO_TCP, PROTO_UDP};
 
@@ -25,6 +26,29 @@ pub fn evaluate(rules: &[Rule], event: &ConnectEvent, info: &ProcInfo) -> Option
         .iter()
         .find(|r| matches(r, event, info))
         .map(|r| r.verdict)
+}
+
+/// Verdict the kernel-side per-PID cache can encode for `exe`.
+///
+/// The kernel map only short-circuits on a `Verdict::Deny` value, and it
+/// stores one verdict per PID — meaning we can only push a rule whose
+/// host/port/protocol axes are all `Any`. Per-destination rules stay
+/// userspace-only until phase 5+ adds a richer kernel map.
+pub fn default_verdict_for_exe(rules: &[Rule], exe: &Path) -> Option<Verdict> {
+    rules.iter().find_map(|r| {
+        let exe_matches = match &r.exe_match {
+            ExeMatch::Any => true,
+            ExeMatch::Exact(p) => p == exe,
+        };
+        let unconditional = matches!(r.host, HostMatch::Any)
+            && matches!(r.port, PortMatch::Any)
+            && matches!(r.protocol, ProtocolMatch::Any);
+        if exe_matches && unconditional {
+            Some(r.verdict)
+        } else {
+            None
+        }
+    })
 }
 
 fn matches_exe(m: &ExeMatch, info: &ProcInfo) -> bool {
@@ -363,6 +387,56 @@ mod tests {
 
         let rules = vec![deny_github, allow_any()];
         assert_eq!(evaluate(&rules, &event, &info), Some(Verdict::Deny));
+    }
+
+    #[test]
+    fn default_verdict_finds_unconditional_deny_for_exe() {
+        let curl = std::path::PathBuf::from("/usr/bin/curl");
+        let rules = vec![rule(
+            ExeMatch::Exact(curl.clone()),
+            HostMatch::Any,
+            PortMatch::Any,
+            ProtocolMatch::Any,
+            Verdict::Deny,
+        )];
+        assert_eq!(default_verdict_for_exe(&rules, &curl), Some(Verdict::Deny));
+    }
+
+    #[test]
+    fn default_verdict_skips_destination_specific_rules() {
+        let curl = std::path::PathBuf::from("/usr/bin/curl");
+        let rules = vec![rule(
+            ExeMatch::Exact(curl.clone()),
+            HostMatch::Ip(IpAddr::from_str("1.1.1.1").unwrap()),
+            PortMatch::Any,
+            ProtocolMatch::Any,
+            Verdict::Deny,
+        )];
+        // Destination-specific deny isn't enforceable in the per-PID
+        // kernel map, so we report None.
+        assert_eq!(default_verdict_for_exe(&rules, &curl), None);
+    }
+
+    #[test]
+    fn default_verdict_picks_first_matching_rule() {
+        let curl = std::path::PathBuf::from("/usr/bin/curl");
+        let rules = vec![
+            rule(
+                ExeMatch::Any,
+                HostMatch::Any,
+                PortMatch::Any,
+                ProtocolMatch::Any,
+                Verdict::Allow,
+            ),
+            rule(
+                ExeMatch::Exact(curl.clone()),
+                HostMatch::Any,
+                PortMatch::Any,
+                ProtocolMatch::Any,
+                Verdict::Deny,
+            ),
+        ];
+        assert_eq!(default_verdict_for_exe(&rules, &curl), Some(Verdict::Allow));
     }
 
     #[test]
