@@ -1,7 +1,6 @@
 //! `sluice` — the GUI front-end.
-//!
-//! Phase 1 only ships the binary skeleton. The empty window and IPC to
-//! `sluiced` arrive in phase 6.
+
+mod ipc_client;
 
 use anyhow::Result;
 

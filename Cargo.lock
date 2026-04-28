@@ -3306,7 +3306,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "iced",
+ "serde_json",
  "sluice-common",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]
