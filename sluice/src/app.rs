@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 
-use iced::widget::{button, column, container, row, scrollable, text};
+use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Element, Length, Subscription, Task};
 use sluice_common::ipc::{Event, Request, RuleSummary};
 
@@ -19,6 +19,37 @@ pub struct SluiceApp {
     events: VecDeque<Event>,
     pending_prompts: VecDeque<PendingPrompt>,
     tab: Tab,
+    form: RuleForm,
+}
+
+#[derive(Default)]
+struct RuleForm {
+    exe: String,
+    host: String,
+    port: String,
+    protocol: String,
+    verdict: String,
+}
+
+impl RuleForm {
+    fn fresh() -> Self {
+        Self {
+            exe: "any".to_string(),
+            host: "any".to_string(),
+            port: "any".to_string(),
+            protocol: "any".to_string(),
+            verdict: "deny".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum FormField {
+    Exe,
+    Host,
+    Port,
+    Protocol,
+    Verdict,
 }
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +89,9 @@ pub enum Message {
     Allow(u32),
     Deny(u32),
     SelectTab(Tab),
+    FormFieldChanged(FormField, String),
+    AddRuleClicked,
+    DeleteRule(i64),
 }
 
 impl SluiceApp {
@@ -88,7 +122,32 @@ impl SluiceApp {
             }
             Message::Allow(pid) => self.dispatch_verdict(pid, "allow"),
             Message::Deny(pid) => self.dispatch_verdict(pid, "deny"),
-            Message::SelectTab(tab) => self.tab = tab,
+            Message::SelectTab(tab) => {
+                self.tab = tab;
+                if matches!(tab, Tab::Rules) && self.form.exe.is_empty() {
+                    self.form = RuleForm::fresh();
+                }
+            }
+            Message::FormFieldChanged(field, value) => match field {
+                FormField::Exe => self.form.exe = value,
+                FormField::Host => self.form.host = value,
+                FormField::Port => self.form.port = value,
+                FormField::Protocol => self.form.protocol = value,
+                FormField::Verdict => self.form.verdict = value,
+            },
+            Message::AddRuleClicked => {
+                send_request(Request::AddRule {
+                    exe: self.form.exe.clone(),
+                    host: self.form.host.clone(),
+                    port: self.form.port.clone(),
+                    protocol: self.form.protocol.clone(),
+                    verdict: self.form.verdict.clone(),
+                });
+                self.form = RuleForm::fresh();
+            }
+            Message::DeleteRule(id) => {
+                send_request(Request::DeleteRule { id });
+            }
         }
         Task::none()
     }
@@ -171,8 +230,29 @@ impl SluiceApp {
     }
 
     fn rules_view(&self) -> Element<'_, Message> {
-        // Real implementation lands in the next commit (task 70).
-        text("rules manager — coming up").size(14).into()
+        let header = text(format!("Rules ({})", self.rules.len())).size(16);
+
+        let list: Element<'_, Message> = if self.rules.is_empty() {
+            text("(no rules — add one below)").size(13).into()
+        } else {
+            let rows = self.rules.iter().map(rule_row).collect::<Vec<_>>();
+            scrollable(column(rows).spacing(4))
+                .height(Length::Fixed(200.0))
+                .into()
+        };
+
+        let form_label = text("Add rule").size(15);
+        let form = column![
+            field_row("exe", &self.form.exe, FormField::Exe),
+            field_row("host", &self.form.host, FormField::Host),
+            field_row("port", &self.form.port, FormField::Port),
+            field_row("protocol", &self.form.protocol, FormField::Protocol),
+            field_row("verdict", &self.form.verdict, FormField::Verdict),
+            button("Add rule").on_press(Message::AddRuleClicked),
+        ]
+        .spacing(6);
+
+        column![header, list, form_label, form].spacing(10).into()
     }
 
     fn policy_view(&self) -> Element<'_, Message> {
@@ -240,6 +320,34 @@ impl SluiceApp {
 
         column![header, body].spacing(8).into()
     }
+}
+
+fn rule_row(r: &RuleSummary) -> Element<'_, Message> {
+    let summary = text(format!(
+        "[{:>4}] {} exe={} host={} port={} proto={}",
+        r.id, r.verdict, r.exe, r.host, r.port, r.protocol,
+    ))
+    .size(13);
+    let delete = button(text("Delete").size(12)).on_press(Message::DeleteRule(r.id));
+    container(
+        row![summary, delete]
+            .spacing(8)
+            .align_y(iced::Alignment::Center),
+    )
+    .padding(4)
+    .width(Length::Fill)
+    .into()
+}
+
+fn field_row<'a>(label: &'a str, value: &str, field: FormField) -> Element<'a, Message> {
+    let input = text_input("any", value)
+        .on_input(move |v| Message::FormFieldChanged(field, v))
+        .padding(4)
+        .width(Length::Fixed(220.0));
+    row![text(label).size(13).width(Length::Fixed(80.0)), input]
+        .spacing(6)
+        .align_y(iced::Alignment::Center)
+        .into()
 }
 
 fn prompt_row(p: &PendingPrompt) -> Element<'_, Message> {
