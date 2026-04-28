@@ -6,7 +6,7 @@ commits.
 | # | Phase | Focus |
 |---|-------|-------|
 | 1 | [Workspace Skeleton](phase-1.md) | Cargo workspaces, crate stubs, CI |
-| 2 | Passive Connection Observation | `cgroup/connect4` probe, ring-buffer events, daemon log |
+| 2 | [Passive Connection Observation](phase-2.md) | `cgroup/connect4`+`connect6` probes, ring-buffer events, daemon log |
 | 3 | PID → Executable Resolution | `/proc/PID/exe` lookup, comm/cmdline cache |
 | 4 | Rules Engine + SQLite | Rule schema, match logic, default policy |
 | 5 | Active Blocking | Kernel-side rule cache, deny verdicts, cgroup attach |
