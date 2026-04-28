@@ -1,0 +1,20 @@
+[package]
+name = "sluice"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Sluice GUI — iced-based desktop app that talks to sluiced over a Unix socket."
+
+[[bin]]
+name = "sluice"
+path = "src/main.rs"
+
+[dependencies]
+sluice-common = { workspace = true }
+iced = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
