@@ -104,10 +104,8 @@ pub enum Tab {
 struct PendingPrompt {
     pid: u32,
     exe: Option<String>,
-    family: String,
     addr: String,
     dport: u16,
-    protocol: String,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -241,20 +239,16 @@ impl SluiceApp {
             Event::Prompt {
                 pid,
                 exe,
-                family,
                 addr,
                 dport,
-                protocol,
                 ..
             } => {
                 if !self.pending_prompts.iter().any(|p| p.pid == *pid) {
                     self.pending_prompts.push_back(PendingPrompt {
                         pid: *pid,
                         exe: exe.clone(),
-                        family: family.clone(),
                         addr: addr.clone(),
                         dport: *dport,
-                        protocol: protocol.clone(),
                     });
                 }
             }

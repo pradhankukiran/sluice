@@ -6,7 +6,7 @@
 
 use iced::font::{Family, Weight};
 use iced::widget::{button, container, text_input};
-use iced::{Background, Border, Color, Font, Shadow, Theme, Vector};
+use iced::{Background, Border, Color, Font, Shadow, Theme};
 
 /// Monospace font for tabular data (paths, IPs, PIDs, ports, bytes).
 pub const MONO: Font = Font::MONOSPACE;
@@ -66,21 +66,6 @@ pub const STATUSBAR_TEXT_BRIGHT: Color = Color::from_rgb(0.937, 0.945, 0.961);
 
 // ---------- container styles ----------
 
-/// Sharp-cornered card on a white background with a subtle hairline
-/// border. Used for every section in the GUI.
-pub fn card(_: &Theme) -> container::Style {
-    container::Style {
-        background: Some(Background::Color(CARD)),
-        border: Border {
-            color: BORDER,
-            width: 1.0,
-            radius: 0.0.into(),
-        },
-        text_color: Some(TEXT),
-        shadow: Shadow::default(),
-    }
-}
-
 /// Page-level frame (everything below the title bar). Just sets the
 /// background color so the cards stand out.
 pub fn page(_: &Theme) -> container::Style {
@@ -88,20 +73,6 @@ pub fn page(_: &Theme) -> container::Style {
         background: Some(Background::Color(BG)),
         text_color: Some(TEXT),
         ..Default::default()
-    }
-}
-
-/// Subtle gray header strip used at the top of card content.
-pub fn section_header(_: &Theme) -> container::Style {
-    container::Style {
-        background: Some(Background::Color(TABLE_HEADER_BG)),
-        border: Border {
-            color: BORDER,
-            width: 0.0,
-            radius: 0.0.into(),
-        },
-        text_color: Some(TEXT),
-        shadow: Shadow::default(),
     }
 }
 
@@ -223,34 +194,6 @@ pub fn danger_button(_: &Theme, status: button::Status) -> button::Style {
             radius: 0.0.into(),
         },
         shadow: Shadow::default(),
-    }
-}
-
-pub fn tab_button(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |_, status| {
-        let (text_color, bottom_w) = if active {
-            (PRIMARY, 2.0)
-        } else {
-            let muted = matches!(status, button::Status::Hovered | button::Status::Pressed);
-            (if muted { TEXT } else { TEXT_MUTED }, 0.0)
-        };
-        button::Style {
-            background: Some(Background::Color(Color::TRANSPARENT)),
-            text_color,
-            border: Border {
-                // We can only set a uniform border in iced 0.13, so the
-                // "tab underline" effect comes from a separate
-                // bottom-aligned `Rule` in the layout.
-                color: Color::TRANSPARENT,
-                width: 0.0,
-                radius: 0.0.into(),
-            },
-            shadow: Shadow {
-                color: Color::TRANSPARENT,
-                offset: Vector::new(0.0, bottom_w),
-                blur_radius: 0.0,
-            },
-        }
     }
 }
 
