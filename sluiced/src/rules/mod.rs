@@ -15,5 +15,6 @@
 //! - [`policy`]  — default policy when no rule matches.
 //! - [`schema`]  — SQL DDL + migrations.
 
+pub mod matcher;
 pub mod types;
 
