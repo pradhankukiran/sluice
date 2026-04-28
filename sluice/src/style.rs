@@ -53,7 +53,7 @@ pub const BORDER_STRONG: Color = Color::from_rgb(0.820, 0.835, 0.851);
 pub const TEXT: Color = Color::from_rgb(0.067, 0.094, 0.153);
 pub const TEXT_MUTED: Color = Color::from_rgb(0.420, 0.447, 0.502);
 pub const PRIMARY: Color = Color::from_rgb(0.149, 0.388, 0.922);
-pub const PRIMARY_HOVER: Color = Color::from_rgb(0.118, 0.318, 0.776);
+pub const PRIMARY_HOVER: Color = Color::from_rgb(0.118, 0.317, 0.776);
 pub const DANGER: Color = Color::from_rgb(0.863, 0.149, 0.149);
 pub const DANGER_HOVER: Color = Color::from_rgb(0.722, 0.110, 0.110);
 pub const SUCCESS: Color = Color::from_rgb(0.086, 0.639, 0.290);
@@ -267,7 +267,7 @@ pub fn sidebar(_: &Theme) -> container::Style {
 
 pub fn text_input_style(_: &Theme, status: text_input::Status) -> text_input::Style {
     let border_color = match status {
-        text_input::Status::Focused { .. } => PRIMARY,
+        text_input::Status::Focused => PRIMARY,
         _ => BORDER_STRONG,
     };
     text_input::Style {
