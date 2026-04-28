@@ -21,6 +21,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use tokio::net::lookup_host;
 
+use crate::rules::types::{HostMatch, Rule};
+
 /// How long a resolution is reused before the cache forces a refresh.
 /// Stdlib's resolver hides per-record TTLs, so we apply a uniform
 /// conservative window.
@@ -82,6 +84,37 @@ impl DnsCache {
 
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// Resolve every `HostMatch::Hostname` referenced by `rules` whose
+    /// cached entry is missing or stale, populating the cache. Already-
+    /// fresh entries are left untouched. Failures per hostname are
+    /// logged and skipped so one DNS hiccup doesn't break the batch.
+    pub async fn refresh_for_rules(&mut self, rules: &[Rule]) {
+        let mut targets: Vec<String> = rules
+            .iter()
+            .filter_map(|r| match &r.host {
+                HostMatch::Hostname(h) => Some(h.clone()),
+                _ => None,
+            })
+            .collect();
+        targets.sort();
+        targets.dedup();
+
+        let now = Instant::now();
+        for hostname in targets {
+            if let Some(entry) = self.entries.get(&hostname) {
+                if entry.expires_at > now {
+                    continue;
+                }
+            }
+            match resolve(&hostname).await {
+                Ok(addrs) => self.insert(&hostname, addrs, DEFAULT_TTL),
+                Err(err) => {
+                    tracing::warn!(hostname, error = %err, "DNS resolve failed");
+                }
+            }
+        }
     }
 }
 
@@ -164,5 +197,35 @@ mod tests {
         // this test doesn't depend on external DNS.
         let addrs = resolve("localhost").await.unwrap();
         assert!(addrs.iter().any(|ip| ip.is_loopback()));
+    }
+
+    #[tokio::test]
+    async fn refresh_resolves_only_hostname_rules() {
+        use crate::rules::types::{ExeMatch, PortMatch, ProtocolMatch, Verdict};
+
+        let rules = vec![
+            // No hostname; refresh should ignore.
+            Rule {
+                id: 1,
+                exe_match: ExeMatch::Any,
+                host: HostMatch::Any,
+                port: PortMatch::Any,
+                protocol: ProtocolMatch::Any,
+                verdict: Verdict::Allow,
+            },
+            // Hostname rule referencing localhost (in /etc/hosts).
+            Rule {
+                id: 2,
+                exe_match: ExeMatch::Any,
+                host: HostMatch::Hostname("localhost".to_string()),
+                port: PortMatch::Any,
+                protocol: ProtocolMatch::Any,
+                verdict: Verdict::Deny,
+            },
+        ];
+        let mut cache = DnsCache::new();
+        cache.refresh_for_rules(&rules).await;
+        assert_eq!(cache.len(), 1);
+        assert!(cache.lookup("localhost").is_some());
     }
 }
