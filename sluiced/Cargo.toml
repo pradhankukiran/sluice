@@ -14,7 +14,10 @@ path = "src/main.rs"
 
 [dependencies]
 sluice-common = { workspace = true }
+aya = { workspace = true }
+aya-log = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
+thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
