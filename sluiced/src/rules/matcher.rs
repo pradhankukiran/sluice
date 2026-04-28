@@ -16,12 +16,7 @@ use crate::rules::types::{ExeMatch, HostMatch, PortMatch, ProtocolMatch, Rule, V
 /// `dns` may be `None` when the caller has no DNS cache available
 /// (e.g. unit tests, the kernel-map evaluator); hostname rules then
 /// silently fail to match.
-pub fn matches(
-    rule: &Rule,
-    event: &ConnectEvent,
-    info: &ProcInfo,
-    dns: Option<&DnsCache>,
-) -> bool {
+pub fn matches(rule: &Rule, event: &ConnectEvent, info: &ProcInfo, dns: Option<&DnsCache>) -> bool {
     matches_exe(&rule.exe_match, info)
         && matches_host(&rule.host, event, dns)
         && matches_port(&rule.port, event)

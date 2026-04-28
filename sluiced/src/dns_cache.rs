@@ -67,10 +67,8 @@ impl DnsCache {
     /// the resolver helper after a successful `getaddrinfo`.
     pub fn insert(&mut self, hostname: &str, addrs: Vec<IpAddr>, ttl: Duration) {
         let expires_at = Instant::now() + ttl;
-        self.entries.insert(
-            hostname.to_string(),
-            Resolved { addrs, expires_at },
-        );
+        self.entries
+            .insert(hostname.to_string(), Resolved { addrs, expires_at });
     }
 
     /// Drop entries whose TTL has lapsed. Cheap to call; runs O(n).
@@ -110,11 +108,7 @@ impl DnsCache {
     }
 
     /// Insert a batch of resolutions, replacing any existing entries.
-    pub fn apply_resolutions(
-        &mut self,
-        resolutions: Vec<(String, Vec<IpAddr>)>,
-        ttl: Duration,
-    ) {
+    pub fn apply_resolutions(&mut self, resolutions: Vec<(String, Vec<IpAddr>)>, ttl: Duration) {
         for (name, addrs) in resolutions {
             self.insert(&name, addrs, ttl);
         }
