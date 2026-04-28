@@ -7,6 +7,7 @@ mod formatter;
 mod proc_cache;
 mod proc_info;
 mod ring_reader;
+mod rules;
 
 use anyhow::Result;
 
