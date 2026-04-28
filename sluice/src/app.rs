@@ -10,6 +10,8 @@ use crate::ipc_client::ClientMessage;
 use crate::subscription::{ipc_subscription, send_request};
 
 const MAX_EVENTS: usize = 500;
+/// Cap on the per-PID picker shown above the Bandwidth Add form.
+const MAX_RECENT_PIDS: usize = 12;
 
 #[derive(Default)]
 pub struct SluiceApp {
@@ -27,6 +29,16 @@ pub struct SluiceApp {
     /// `Event::Throughput`. Used by the Bandwidth view to render a
     /// live meter alongside the configured rate.
     throughput: HashMap<u32, u64>,
+    /// Recent (pid, exe-label) pairs from `Event::Connection`, deduped
+    /// by PID. The Bandwidth tab renders these as one-click buttons
+    /// to populate the form.
+    recent_pids: VecDeque<RecentPid>,
+}
+
+#[derive(Clone)]
+struct RecentPid {
+    pid: u32,
+    label: String,
 }
 
 #[derive(Default)]
@@ -203,7 +215,18 @@ impl SluiceApp {
 
     fn absorb_event(&mut self, event: Event) {
         match &event {
-            Event::Connection { .. } => {}
+            Event::Connection { pid, exe, .. } => {
+                let label = exe
+                    .as_ref()
+                    .and_then(|p| p.rsplit('/').next().map(|s| s.to_string()))
+                    .unwrap_or_else(|| "(?)".to_string());
+                let candidate = RecentPid { pid: *pid, label };
+                self.recent_pids.retain(|r| r.pid != candidate.pid);
+                self.recent_pids.push_front(candidate);
+                while self.recent_pids.len() > MAX_RECENT_PIDS {
+                    self.recent_pids.pop_back();
+                }
+            }
             Event::Prompt {
                 pid,
                 exe,
@@ -336,6 +359,7 @@ impl SluiceApp {
 
     fn bandwidth_view(&self) -> Element<'_, Message> {
         let header = text(format!("Rate limits ({})", self.rates.len())).size(16);
+        let picker = self.recent_pids_picker();
 
         let list: Element<'_, Message> = if self.rates.is_empty() {
             text("(no per-process rate limits — add one below)")
@@ -385,7 +409,30 @@ impl SluiceApp {
             );
         }
 
-        column![header, list, form_label, form].spacing(10).into()
+        column![header, list, picker, form_label, form]
+            .spacing(10)
+            .into()
+    }
+
+    fn recent_pids_picker(&self) -> Element<'_, Message> {
+        if self.recent_pids.is_empty() {
+            return column![].into();
+        }
+        let label = text("Recent processes — click to fill PID:").size(12);
+        let mut buttons = row![].spacing(4);
+        for r in &self.recent_pids {
+            let label_str = format!("{}({})", r.label, r.pid);
+            let btn = button(text(label_str).size(11))
+                .on_press(Message::RateFieldChanged(
+                    RateField::Pid,
+                    r.pid.to_string(),
+                ))
+                .padding([2, 6]);
+            buttons = buttons.push(btn);
+        }
+        column![label, scrollable(buttons).height(Length::Fixed(40.0))]
+            .spacing(4)
+            .into()
     }
 
     fn policy_view(&self) -> Element<'_, Message> {
