@@ -12,16 +12,32 @@ use aya_ebpf::{
     programs::SockAddrContext,
 };
 use sluice_common::event::{ConnectEvent, COMM_LEN, FAMILY_INET6, PROTO_TCP};
+use sluice_common::Verdict;
 
-use crate::maps::EVENTS;
+use crate::maps::{EVENTS, VERDICTS};
 
 /// Allow the connection.
 const ACTION_ALLOW: i32 = 1;
+/// Deny the connection — kernel returns ECONNREFUSED to the caller.
+const ACTION_DENY: i32 = 0;
+
+const VERDICT_DENY: u32 = Verdict::Deny.as_u32();
 
 #[cgroup_sock_addr(connect6)]
 pub fn sluice_connect6(ctx: SockAddrContext) -> i32 {
+    let tgid = (bpf_get_current_pid_tgid() >> 32) as u32;
+
+    let deny_in_kernel = unsafe { VERDICTS.get(&tgid) }
+        .map(|v| *v == VERDICT_DENY)
+        .unwrap_or(false);
+
     let _ = emit_event(&ctx);
-    ACTION_ALLOW
+
+    if deny_in_kernel {
+        ACTION_DENY
+    } else {
+        ACTION_ALLOW
+    }
 }
 
 fn emit_event(ctx: &SockAddrContext) -> Result<(), i64> {
