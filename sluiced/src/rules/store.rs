@@ -141,6 +141,52 @@ impl SqliteRuleStore {
         )?;
         Ok(())
     }
+
+    /// Upsert a per-PID rate limit. The entry survives daemon
+    /// restarts; PID reuse is handled at reload time by skipping
+    /// entries whose PID is no longer alive.
+    pub fn upsert_rate(&self, pid: u32, rate_bps: u64, burst_bytes: u64) -> Result<()> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        self.conn.execute(
+            "INSERT INTO rates (pid, rate_bps, burst_bytes, created_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(pid) DO UPDATE SET
+                rate_bps    = excluded.rate_bps,
+                burst_bytes = excluded.burst_bytes,
+                created_at  = excluded.created_at",
+            params![pid as i64, rate_bps as i64, burst_bytes as i64, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_rate(&self, pid: u32) -> Result<bool> {
+        let n = self
+            .conn
+            .execute("DELETE FROM rates WHERE pid = ?1", params![pid as i64])?;
+        Ok(n > 0)
+    }
+
+    /// All persisted (pid, rate_bps, burst_bytes) entries.
+    pub fn list_rates(&self) -> Result<Vec<(u32, u64, u64)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT pid, rate_bps, burst_bytes FROM rates ORDER BY pid")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)? as u32,
+                row.get::<_, i64>(1)? as u64,
+                row.get::<_, i64>(2)? as u64,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
 }
 
 // ---------- codecs (free fns kept private to this module) ----------
@@ -367,6 +413,25 @@ mod tests {
 
         store.set_default_policy(Policy::Ask).unwrap();
         assert_eq!(store.default_policy().unwrap(), Policy::Ask);
+    }
+
+    #[test]
+    fn rate_upsert_list_delete_roundtrip() {
+        let store = SqliteRuleStore::open_in_memory().unwrap();
+        store.upsert_rate(1234, 1_000_000, 1_000_000).unwrap();
+        store.upsert_rate(5678, 2_000_000, 2_000_000).unwrap();
+
+        let rows = store.list_rates().unwrap();
+        assert_eq!(rows, vec![(1234, 1_000_000, 1_000_000), (5678, 2_000_000, 2_000_000)]);
+
+        // Update existing.
+        store.upsert_rate(1234, 4_000_000, 8_000_000).unwrap();
+        let rows = store.list_rates().unwrap();
+        assert_eq!(rows[0], (1234, 4_000_000, 8_000_000));
+
+        assert!(store.delete_rate(1234).unwrap());
+        assert!(!store.delete_rate(9999).unwrap());
+        assert_eq!(store.list_rates().unwrap().len(), 1);
     }
 
     #[test]

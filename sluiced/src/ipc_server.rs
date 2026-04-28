@@ -541,6 +541,17 @@ fn apply_set_rate(handle: &DaemonHandle, pid: u32, rate_bps: u64, burst_bytes: u
         };
     }
 
+    // Best-effort persistence: a SQLite write failure should not
+    // prevent the kernel-side change from taking effect.
+    match handle.store.lock() {
+        Ok(store) => {
+            if let Err(err) = store.upsert_rate(pid, rate_bps, burst) {
+                tracing::warn!(pid, error = %err, "rate persist failed");
+            }
+        }
+        Err(err) => tracing::warn!(error = %err, "store mutex poisoned during rate persist"),
+    }
+
     tracing::info!(pid, rate_bps, burst_bytes = burst, "rate limit set via IPC");
     Response::RateUpdated {
         pid,
@@ -559,6 +570,14 @@ fn apply_clear_rate(handle: &DaemonHandle, pid: u32) -> Response {
         return Response::Error {
             message: format!("clear rate failed: {err}"),
         };
+    }
+    match handle.store.lock() {
+        Ok(store) => {
+            if let Err(err) = store.delete_rate(pid) {
+                tracing::warn!(pid, error = %err, "rate delete from store failed");
+            }
+        }
+        Err(err) => tracing::warn!(error = %err, "store mutex poisoned during rate delete"),
     }
     tracing::info!(pid, "rate limit cleared via IPC");
     Response::RateCleared { pid }

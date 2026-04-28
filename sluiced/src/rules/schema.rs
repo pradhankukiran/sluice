@@ -26,6 +26,18 @@ const MIGRATIONS: &[&str] = &[
         value TEXT NOT NULL
     );
     "#,
+    // v2 — per-PID rate limits, persisted across daemon restarts.
+    // PIDs are reused after process exit, so the entry is best-effort:
+    // on reload we only re-apply to PIDs that still exist (the daemon
+    // checks `/proc/<pid>` before pushing into the kernel map).
+    r#"
+    CREATE TABLE rates (
+        pid          INTEGER PRIMARY KEY,
+        rate_bps     INTEGER NOT NULL,
+        burst_bytes  INTEGER NOT NULL,
+        created_at   INTEGER NOT NULL
+    );
+    "#,
 ];
 
 pub fn apply_migrations(conn: &Connection) -> Result<()> {

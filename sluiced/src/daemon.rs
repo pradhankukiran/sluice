@@ -90,7 +90,29 @@ async fn run_async() -> Result<()> {
         );
     }
     let kernel_map = Arc::new(Mutex::new(kernel_map));
-    let kernel_rates = Arc::new(Mutex::new(KernelRateLimits::from_ebpf(&mut bpf)?));
+    let kernel_rates = {
+        let mut k = KernelRateLimits::from_ebpf(&mut bpf)?;
+        // Reload persisted rates, skipping PIDs that no longer exist.
+        let persisted = store
+            .lock()
+            .expect("store mutex")
+            .list_rates()
+            .unwrap_or_default();
+        let mut reapplied = 0;
+        for (pid, rate_bps, burst) in persisted {
+            if !std::path::Path::new(&format!("/proc/{pid}")).exists() {
+                tracing::info!(pid, "skipping persisted rate for exited PID");
+                continue;
+            }
+            if let Err(err) = k.set(pid, rate_bps, burst) {
+                tracing::warn!(pid, error = %err, "failed to reapply persisted rate");
+            } else {
+                reapplied += 1;
+            }
+        }
+        tracing::info!(reapplied, "persisted rate limits reloaded");
+        Arc::new(Mutex::new(k))
+    };
     let pending_prompts: Arc<Mutex<HashSet<u32>>> = Arc::new(Mutex::new(HashSet::new()));
 
     let programs = attach::attach_cgroup_programs(&mut bpf, &cgroup_root)?;
