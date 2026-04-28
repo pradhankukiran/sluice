@@ -8,10 +8,12 @@
 //! depend on libstd.
 
 pub mod event;
+pub mod token_bucket;
 pub mod verdict;
 
 #[cfg(feature = "std")]
 pub mod ipc;
 
 pub use event::ConnectEvent;
+pub use token_bucket::TokenBucket;
 pub use verdict::Verdict;
