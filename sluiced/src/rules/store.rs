@@ -422,7 +422,10 @@ mod tests {
         store.upsert_rate(5678, 2_000_000, 2_000_000).unwrap();
 
         let rows = store.list_rates().unwrap();
-        assert_eq!(rows, vec![(1234, 1_000_000, 1_000_000), (5678, 2_000_000, 2_000_000)]);
+        assert_eq!(
+            rows,
+            vec![(1234, 1_000_000, 1_000_000), (5678, 2_000_000, 2_000_000)]
+        );
 
         // Update existing.
         store.upsert_rate(1234, 4_000_000, 8_000_000).unwrap();

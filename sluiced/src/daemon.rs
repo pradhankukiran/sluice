@@ -160,9 +160,8 @@ async fn run_async() -> Result<()> {
         let events_tx = events_tx.clone();
         tokio::spawn(async move {
             let mut prev: std::collections::HashMap<u32, u64> = std::collections::HashMap::new();
-            let mut tick = tokio::time::interval(std::time::Duration::from_secs(
-                THROUGHPUT_INTERVAL_SECS,
-            ));
+            let mut tick =
+                tokio::time::interval(std::time::Duration::from_secs(THROUGHPUT_INTERVAL_SECS));
             // Skip the leading immediate tick — we want a real interval
             // before the first delta.
             tick.tick().await;

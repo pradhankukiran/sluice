@@ -423,10 +423,7 @@ impl SluiceApp {
         for r in &self.recent_pids {
             let label_str = format!("{}({})", r.label, r.pid);
             let btn = button(text(label_str).size(11))
-                .on_press(Message::RateFieldChanged(
-                    RateField::Pid,
-                    r.pid.to_string(),
-                ))
+                .on_press(Message::RateFieldChanged(RateField::Pid, r.pid.to_string()))
                 .padding([2, 6]);
             buttons = buttons.push(btn);
         }

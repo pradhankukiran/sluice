@@ -16,4 +16,4 @@ commits.
 | 9 | [DNS-Aware Rules](phase-9.md) | DnsCache forward-lookup with TTL, HostMatch::Hostname matcher path |
 | 10 | [Bandwidth Shaping (Kernel)](phase-10.md) | tc-bpf egress + cookie→PID + per-PID token bucket |
 | 11 | [Bandwidth Shaping (UI)](phase-11.md) | Bandwidth tab, rate list + Clear, KB/s Add form |
-| 12 | Polish & Packaging | Tray icon, autostart, `.deb`/Flatpak |
+| 12 | [Polish & Packaging](phase-12.md) | Persisted rates, throughput meter, validation, picker, systemd, .deb, README |
