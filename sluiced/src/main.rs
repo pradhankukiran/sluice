@@ -1,6 +1,7 @@
 //! `sluiced` — the privileged sluice daemon.
 
 mod cgroup;
+mod ebpf_loader;
 
 use anyhow::Result;
 
@@ -16,6 +17,11 @@ fn main() -> Result<()> {
 
     let cgroup_root = cgroup::resolve()?;
     tracing::info!(path = %cgroup_root.display(), "cgroup v2 root resolved");
+
+    let bytecode_path = ebpf_loader::bytecode_path();
+    tracing::info!(path = %bytecode_path.display(), "eBPF bytecode path");
+    let _bpf = ebpf_loader::load()?;
+    tracing::info!("eBPF object loaded");
 
     Ok(())
 }
