@@ -81,6 +81,21 @@ pub enum Request {
         /// `allow | deny | ask`.
         policy: String,
     },
+    /// Configure (or reconfigure) per-PID egress rate limit. The rate
+    /// is bytes per second; `burst_bytes` is the bucket capacity. Pass
+    /// `rate_bps == 0` to switch to "unlimited" without removing the
+    /// entry.
+    SetRate {
+        pid: u32,
+        rate_bps: u64,
+        burst_bytes: u64,
+    },
+    /// Remove the per-PID rate-limit entry entirely.
+    ClearRate {
+        pid: u32,
+    },
+    /// Snapshot the current per-PID rate limit table.
+    ListRates,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -107,9 +122,27 @@ pub enum Response {
     PolicyUpdated {
         policy: String,
     },
+    RateUpdated {
+        pid: u32,
+        rate_bps: u64,
+        burst_bytes: u64,
+    },
+    RateCleared {
+        pid: u32,
+    },
+    Rates {
+        entries: Vec<RateEntry>,
+    },
     Error {
         message: String,
     },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RateEntry {
+    pub pid: u32,
+    pub rate_bps: u64,
+    pub burst_bytes: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

@@ -91,7 +91,10 @@ async fn session(
         | Response::VerdictApplied { .. }
         | Response::RuleAdded { .. }
         | Response::RuleDeleted { .. }
-        | Response::PolicyUpdated { .. } => {
+        | Response::PolicyUpdated { .. }
+        | Response::RateUpdated { .. }
+        | Response::RateCleared { .. }
+        | Response::Rates { .. } => {
             return Err(anyhow!("unexpected response to Hello: {hello:?}"));
         }
     };
@@ -113,7 +116,10 @@ async fn session(
         | Response::VerdictApplied { .. }
         | Response::RuleAdded { .. }
         | Response::RuleDeleted { .. }
-        | Response::PolicyUpdated { .. } => {
+        | Response::PolicyUpdated { .. }
+        | Response::RateUpdated { .. }
+        | Response::RateCleared { .. }
+        | Response::Rates { .. } => {
             return Err(anyhow!("unexpected response to Snapshot: {snapshot:?}"));
         }
     };
@@ -139,7 +145,10 @@ async fn session(
         | Response::VerdictApplied { .. }
         | Response::RuleAdded { .. }
         | Response::RuleDeleted { .. }
-        | Response::PolicyUpdated { .. } => {
+        | Response::PolicyUpdated { .. }
+        | Response::RateUpdated { .. }
+        | Response::RateCleared { .. }
+        | Response::Rates { .. } => {
             return Err(anyhow!(
                 "unexpected response to SubscribeEvents: {subscribed:?}"
             ));

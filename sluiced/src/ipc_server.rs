@@ -16,7 +16,7 @@ use anyhow::{Context, Result};
 use sluice_common::event::{
     ConnectEvent, COMM_LEN, FAMILY_INET, FAMILY_INET6, PROTO_TCP, PROTO_UDP,
 };
-use sluice_common::ipc::{Event, Frame, Request, Response, RuleSummary};
+use sluice_common::ipc::{Event, Frame, RateEntry, Request, Response, RuleSummary};
 use sluice_common::Verdict;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
@@ -226,6 +226,22 @@ async fn handle_client(
                     }
                     send_frame(&mut write_half, &Frame::Response { id, body: response }).await?;
                 }
+                Request::SetRate {
+                    pid,
+                    rate_bps,
+                    burst_bytes,
+                } => {
+                    let response = apply_set_rate(&handle, pid, rate_bps, burst_bytes);
+                    send_frame(&mut write_half, &Frame::Response { id, body: response }).await?;
+                }
+                Request::ClearRate { pid } => {
+                    let response = apply_clear_rate(&handle, pid);
+                    send_frame(&mut write_half, &Frame::Response { id, body: response }).await?;
+                }
+                Request::ListRates => {
+                    let response = apply_list_rates(&handle);
+                    send_frame(&mut write_half, &Frame::Response { id, body: response }).await?;
+                }
             },
             // Servers shouldn't see Response/Event frames; reject loudly
             // so the client realises it has the protocol backwards.
@@ -308,9 +324,13 @@ async fn stream_events(
                             }
                             resp
                         }
+                        Request::SetRate { pid, rate_bps, burst_bytes } => {
+                            apply_set_rate(&handle, pid, rate_bps, burst_bytes)
+                        }
+                        Request::ClearRate { pid } => apply_clear_rate(&handle, pid),
+                        Request::ListRates => apply_list_rates(&handle),
                         // Hello/Snapshot/SubscribeEvents during a stream
-                        // are ignored; clients should only send
-                        // SetVerdict / AddRule / DeleteRule / SetPolicy.
+                        // are ignored.
                         Request::Hello | Request::Snapshot | Request::SubscribeEvents => continue,
                     };
                     send_frame(&mut writer, &Frame::Response { id, body: response }).await?;
@@ -470,6 +490,73 @@ fn apply_set_policy(handle: &DaemonHandle, raw: &str) -> Response {
     Response::PolicyUpdated {
         policy: policy.as_str().to_string(),
     }
+}
+
+fn apply_set_rate(handle: &DaemonHandle, pid: u32, rate_bps: u64, burst_bytes: u64) -> Response {
+    let burst = if burst_bytes == 0 {
+        // Default burst = 1 second of rate (or 64 KiB if unlimited so
+        // the bucket can hold a few packets).
+        if rate_bps == 0 {
+            65_536
+        } else {
+            rate_bps
+        }
+    } else {
+        burst_bytes
+    };
+
+    if let Err(err) = handle
+        .kernel_rates
+        .lock()
+        .map_err(|e| anyhow::anyhow!("kernel_rates mutex poisoned: {e}"))
+        .and_then(|mut rl| rl.set(pid, rate_bps, burst))
+    {
+        return Response::Error {
+            message: format!("set rate failed: {err}"),
+        };
+    }
+
+    tracing::info!(pid, rate_bps, burst_bytes = burst, "rate limit set via IPC");
+    Response::RateUpdated {
+        pid,
+        rate_bps,
+        burst_bytes: burst,
+    }
+}
+
+fn apply_clear_rate(handle: &DaemonHandle, pid: u32) -> Response {
+    if let Err(err) = handle
+        .kernel_rates
+        .lock()
+        .map_err(|e| anyhow::anyhow!("kernel_rates mutex poisoned: {e}"))
+        .and_then(|mut rl| rl.clear(pid))
+    {
+        return Response::Error {
+            message: format!("clear rate failed: {err}"),
+        };
+    }
+    tracing::info!(pid, "rate limit cleared via IPC");
+    Response::RateCleared { pid }
+}
+
+fn apply_list_rates(handle: &DaemonHandle) -> Response {
+    let entries = match handle.kernel_rates.lock() {
+        Ok(rl) => rl
+            .list()
+            .into_iter()
+            .map(|(pid, rate_bps, burst_bytes)| RateEntry {
+                pid,
+                rate_bps,
+                burst_bytes,
+            })
+            .collect(),
+        Err(e) => {
+            return Response::Error {
+                message: format!("kernel_rates mutex poisoned: {e}"),
+            };
+        }
+    };
+    Response::Rates { entries }
 }
 
 fn apply_verdict(handle: &DaemonHandle, pid: u32, verdict: &str) -> Response {
