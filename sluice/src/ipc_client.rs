@@ -31,14 +31,22 @@ pub enum ClientMessage {
 
 /// Run a connect/handshake/subscribe loop until the receiver is dropped.
 /// Reconnects automatically on disconnect with a fixed backoff.
-pub async fn connect_and_run(socket_path: &Path, output: mpsc::Sender<ClientMessage>) {
+///
+/// `requests` is drained inside the streaming session — anything posted
+/// while disconnected is simply queued on the channel until the next
+/// successful subscribe. Sender stays alive across reconnects.
+pub async fn connect_and_run(
+    socket_path: &Path,
+    output: mpsc::Sender<ClientMessage>,
+    mut requests: mpsc::UnboundedReceiver<Request>,
+) {
     let backoff = std::time::Duration::from_secs(2);
     loop {
         if output.send(ClientMessage::Connecting).await.is_err() {
             return;
         }
 
-        match session(socket_path, &output).await {
+        match session(socket_path, &output, &mut requests).await {
             Ok(()) => {
                 let _ = output
                     .send(ClientMessage::Disconnected {
@@ -59,7 +67,11 @@ pub async fn connect_and_run(socket_path: &Path, output: mpsc::Sender<ClientMess
     }
 }
 
-async fn session(socket_path: &Path, output: &mpsc::Sender<ClientMessage>) -> Result<()> {
+async fn session(
+    socket_path: &Path,
+    output: &mpsc::Sender<ClientMessage>,
+    requests: &mut mpsc::UnboundedReceiver<Request>,
+) -> Result<()> {
     let stream = UnixStream::connect(socket_path)
         .await
         .with_context(|| format!("connecting to ipc socket {}", socket_path.display()))?;
@@ -121,19 +133,39 @@ async fn session(socket_path: &Path, output: &mpsc::Sender<ClientMessage>) -> Re
         }
     }
 
-    while let Some(line) = reader.next_line().await? {
-        let frame: Frame =
-            serde_json::from_str(&line).with_context(|| format!("malformed frame: {line}"))?;
-        match frame {
-            Frame::Event(event) => {
-                send_message(output, ClientMessage::Event(event)).await;
+    let mut next_request_id: u64 = 100;
+    loop {
+        tokio::select! {
+            line = reader.next_line() => {
+                let line = match line? {
+                    Some(l) => l,
+                    None => return Ok(()),
+                };
+                let frame: Frame = serde_json::from_str(&line)
+                    .with_context(|| format!("malformed frame: {line}"))?;
+                match frame {
+                    Frame::Event(event) => {
+                        send_message(output, ClientMessage::Event(event)).await;
+                    }
+                    // VerdictApplied is acknowledged by tracing only;
+                    // the GUI updates state from PromptResolved (future).
+                    Frame::Response { body: Response::VerdictApplied { pid, verdict }, .. } => {
+                        tracing::info!(pid, verdict = %verdict, "server confirmed verdict");
+                    }
+                    Frame::Response { body: Response::Error { message }, .. } => {
+                        tracing::warn!(message = %message, "server returned error");
+                    }
+                    Frame::Response { .. } | Frame::Request { .. } => {}
+                }
             }
-            // Phase 6 ignores any further responses — phase 7 will care
-            // when we send verdict requests back.
-            Frame::Response { .. } | Frame::Request { .. } => {}
+            req = requests.recv() => {
+                let Some(req) = req else { return Ok(()); };
+                let id = next_request_id;
+                next_request_id += 1;
+                send_request(&mut write_half, id, req).await?;
+            }
         }
     }
-    Ok(())
 }
 
 async fn send_request(
