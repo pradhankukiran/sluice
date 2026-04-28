@@ -6,3 +6,7 @@
 //! Anything in this crate is `no_std`-compatible so it can be used from the
 //! `sluice-ebpf` crate, which compiles for `bpfel-unknown-none` and cannot
 //! depend on libstd.
+
+pub mod event;
+
+pub use event::ConnectEvent;
