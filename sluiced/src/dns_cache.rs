@@ -1,6 +1,3 @@
-// Wired into matcher + daemon over the next two commits.
-#![allow(dead_code)]
-
 //! Hostname → IP TTL cache.
 //!
 //! Phase 9 takes the *forward-lookup* path: for every rule with
@@ -72,6 +69,9 @@ impl DnsCache {
     }
 
     /// Drop entries whose TTL has lapsed. Cheap to call; runs O(n).
+    /// Currently exercised only by the test suite — a periodic refresh
+    /// task is mentioned as future work in `docs/phase-9.md`.
+    #[cfg(test)]
     pub fn purge_expired(&mut self) {
         let now = Instant::now();
         self.entries.retain(|_, v| v.expires_at > now);
@@ -79,10 +79,6 @@ impl DnsCache {
 
     pub fn len(&self) -> usize {
         self.entries.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
     }
 
     /// Hostnames referenced by `rules` whose cache entry is missing or
