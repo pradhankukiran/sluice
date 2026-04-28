@@ -175,9 +175,10 @@ impl SluiceApp {
                 RateField::RateKbps => self.rate_form.rate_kbps = value,
             },
             Message::AddRate => {
-                if let (Ok(pid), Ok(rate_kbps)) =
-                    (self.rate_form.pid.parse::<u32>(), self.rate_form.rate_kbps.parse::<u64>())
-                {
+                if let (Ok(pid), Ok(rate_kbps)) = (
+                    self.rate_form.pid.parse::<u32>(),
+                    self.rate_form.rate_kbps.parse::<u64>(),
+                ) {
                     let rate_bps = rate_kbps.saturating_mul(1024);
                     send_request(Request::SetRate {
                         pid,

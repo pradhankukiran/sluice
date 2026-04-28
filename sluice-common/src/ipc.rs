@@ -182,9 +182,7 @@ pub enum Event {
     /// Pushed when the per-PID rate-limit table changes (SetRate /
     /// ClearRate) and once at the start of a subscription so the GUI
     /// has the initial state without an explicit `ListRates` request.
-    RatesChanged {
-        entries: Vec<RateEntry>,
-    },
+    RatesChanged { entries: Vec<RateEntry> },
 }
 
 /// Compact rule representation for the GUI. Mirrors the fields the user
