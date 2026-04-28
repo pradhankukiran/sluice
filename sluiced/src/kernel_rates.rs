@@ -1,4 +1,4 @@
-// Wired into daemon + CLI in subsequent commits this phase.
+// `set` / `clear` / `list` light up via the IPC handlers in the next commit.
 #![allow(dead_code)]
 
 //! Userspace handle for the kernel-side `RATE_LIMITS` map.

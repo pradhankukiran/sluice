@@ -18,6 +18,7 @@ use crate::ebpf_loader;
 use crate::formatter;
 use crate::ipc_server;
 use crate::kernel_map::KernelVerdictMap;
+use crate::kernel_rates::KernelRateLimits;
 use crate::proc_cache::ProcInfoCache;
 use crate::ring_reader::EventReader;
 use crate::rules::matcher;
@@ -89,6 +90,7 @@ async fn run_async() -> Result<()> {
         );
     }
     let kernel_map = Arc::new(Mutex::new(kernel_map));
+    let kernel_rates = Arc::new(Mutex::new(KernelRateLimits::from_ebpf(&mut bpf)?));
     let pending_prompts: Arc<Mutex<HashSet<u32>>> = Arc::new(Mutex::new(HashSet::new()));
 
     let programs = attach::attach_cgroup_programs(&mut bpf, &cgroup_root)?;
@@ -107,6 +109,7 @@ async fn run_async() -> Result<()> {
     let socket_path = resolve_socket_path();
     let daemon_handle = ipc_server::DaemonHandle {
         kernel_map: Arc::clone(&kernel_map),
+        kernel_rates: Arc::clone(&kernel_rates),
         pending_prompts: Arc::clone(&pending_prompts),
         rules: Arc::clone(&rules),
         policy: Arc::clone(&policy),

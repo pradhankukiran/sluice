@@ -24,6 +24,7 @@ use tokio::sync::broadcast;
 
 use crate::dns_cache::DnsCache;
 use crate::kernel_map::KernelVerdictMap;
+use crate::kernel_rates::KernelRateLimits;
 use crate::proc_info::ProcInfo;
 use crate::rules::store::SqliteRuleStore;
 use crate::rules::types::{ExeMatch, HostMatch, Policy, PortMatch, ProtocolMatch, Rule};
@@ -32,6 +33,9 @@ use crate::rules::types::{ExeMatch, HostMatch, Policy, PortMatch, ProtocolMatch,
 #[derive(Clone)]
 pub struct DaemonHandle {
     pub kernel_map: Arc<Mutex<KernelVerdictMap>>,
+    /// Wired into IPC SetRate/ClearRate handlers in the next commit.
+    #[allow(dead_code)]
+    pub kernel_rates: Arc<Mutex<KernelRateLimits>>,
     pub pending_prompts: Arc<Mutex<HashSet<u32>>>,
     pub rules: Arc<RwLock<Vec<Rule>>>,
     pub policy: Arc<RwLock<Policy>>,
