@@ -1,5 +1,17 @@
 # sluice
 
+[![CI](https://github.com/pradhankukiran/sluice/actions/workflows/ci.yml/badge.svg)](https://github.com/pradhankukiran/sluice/actions/workflows/ci.yml)
+[![Release](https://github.com/pradhankukiran/sluice/actions/workflows/release.yml/badge.svg)](https://github.com/pradhankukiran/sluice/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/pradhankukiran/sluice?color=blue)](https://github.com/pradhankukiran/sluice/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+![Rust](https://img.shields.io/badge/Rust-1.93+-CE422B?logo=rust&logoColor=white)
+![Linux](https://img.shields.io/badge/Linux-only-FCC624?logo=linux&logoColor=black)
+![eBPF](https://img.shields.io/badge/eBPF-Aya-006400?logo=ebpf&logoColor=white)
+![iced](https://img.shields.io/badge/GUI-iced-9277C7)
+![SQLite](https://img.shields.io/badge/storage-SQLite-003B57?logo=sqlite&logoColor=white)
+![Tokio](https://img.shields.io/badge/runtime-Tokio-blueviolet)
+
 A per-process Linux network gate. **Little Snitch for Linux**, built
 on modern Rust + Aya eBPF.
 
@@ -155,20 +167,45 @@ and current limits.
 | 11 | [Bandwidth shaping (UI)](docs/phase-11.md) |
 | 12 | [Polish + packaging](docs/phase-12.md) |
 
-## Packaging
+## Install
 
-A systemd unit lives at `packaging/sluiced.service`. To produce a
-`.deb`:
+### From a tagged release (Debian / Ubuntu)
+
+```sh
+wget https://github.com/pradhankukiran/sluice/releases/latest/download/sluiced_0.1.0-1_amd64.deb
+sudo dpkg -i sluiced_*.deb
+sudo systemctl enable --now sluiced
+```
+
+The `.deb` ships `sluiced`, `sluice`, the eBPF bytecode under
+`/usr/lib/sluice/`, and the systemd unit at `/lib/systemd/system/sluiced.service`.
+
+### Build a `.deb` locally
 
 ```sh
 cargo install cargo-deb
 cargo build --release --workspace
 cargo run -p xtask -- build-ebpf
-cargo deb -p sluiced
+cargo deb -p sluiced --no-build
+sudo dpkg -i target/debian/sluiced_*.deb
+sudo systemctl enable --now sluiced
 ```
 
-Install with `sudo dpkg -i target/debian/sluiced_*.deb`, then
-`sudo systemctl enable --now sluiced`.
+### From source (anywhere)
+
+```sh
+cargo install bpf-linker --locked
+cargo run -p xtask -- build-ebpf
+cargo build --release --workspace
+
+sudo install -m 755 target/release/sluiced target/release/sluice /usr/bin/
+sudo install -d /usr/lib/sluice
+sudo install -m 644 sluice-ebpf/target/bpfel-unknown-none/release/sluice-ebpf /usr/lib/sluice/
+sudo install -m 644 packaging/sluiced.service /etc/systemd/system/
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now sluiced
+```
 
 ## License
 
